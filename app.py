@@ -1,28 +1,51 @@
-import streamlit as st, requests
+import streamlit as st
+import pandas as pd
+from entsoe import EntsoePandasClient
+from datetime import datetime, timedelta
+import pytz
 
-st.set_page_config(page_title="DIAG ENTSO-E — DOIT CHANGER VISUELLEMENT", layout="wide")
-st.title("🔧 DIAGNOSTIC — ENTSO‑E BE Day‑Ahead")
+# --- Config Streamlit
+st.set_page_config(page_title="BE Day-Ahead – Simple", layout="wide")
+st.title("🇧🇪 BE Day-Ahead – Prix moyens (2023 → 23 août 2025)")
 
-TOKEN = st.secrets.get("ENTSOE_TOKEN", "")
-st.write("Secret présent ?", bool(TOKEN))  # doit afficher True
+# --- Récupération du token
+token = st.secrets.get("ENTSOE_TOKEN", "")
+if not token:
+    st.error("Ajoute ENTSOE_TOKEN dans les secrets Streamlit.")
+    st.stop()
 
-BASE = "https://web-api.tp.entsoe.eu/api"
-ZONE = "10YBE----------2"
+# --- Paramètres API
+client = EntsoePandasClient(api_key=token)
+zone = "10YBE----------2"  # Belgique
+tz = pytz.UTC
 
-# Journée fixe qui contient des données (24 août 2025 local)
-start = "202508232200"  # UTC
-end   = "202508242200"  # UTC
-url = f"{BASE}?documentType=A44&in_Domain={ZONE}&out_Domain={ZONE}&periodStart={start}&periodEnd={end}&securityToken={TOKEN}"
+# Période : du 1er janvier 2023 au 23 août 2025 inclus
+start = pd.Timestamp("2023-01-01", tz=tz)
+end   = pd.Timestamp("2025-08-24", tz=tz)  # exclusif
 
-if st.button("TEST 24 août 2025 (doit renvoyer des données)"):
-    st.code(url.replace(TOKEN, "***"))
-    r = requests.get(url, timeout=30)
-    st.write("HTTP status:", r.status_code)
-    txt = r.text
-    st.text(txt[:600])
-    if "<Publication_MarketDocument" in txt and "<TimeSeries>" in txt:
-        st.success("✅ L’API renvoie des TimeSeries. Token OK.")
-    elif "<Acknowledgement_MarketDocument" in txt:
-        st.error("❌ ACK: No matching data → période/token.")
-    else:
-        st.error("❌ Réponse inattendue (voir texte).")
+# --- Récupération des données
+with st.spinner("Récupération des prix ENTSO-E…"):
+    try:
+        s = client.query_day_ahead_prices(zone, start=start, end=end)
+    except Exception as e:
+        st.error(f"Erreur API ENTSO-E : {e}")
+        st.stop()
+
+# --- Traitement
+s = s.tz_convert("Europe/Brussels")
+df = s.to_frame("price").reset_index()
+df["date"] = df["index"].dt.date
+daily = df.groupby("date")["price"].mean().reset_index()
+
+# --- Affichage
+st.metric("Moyenne totale (2023 → 23 août 2025)",
+          f"{daily['price'].mean():.2f} €/MWh")
+
+st.line_chart(daily.set_index("date")["price"])
+st.dataframe(daily.tail(10), use_container_width=True)
+
+# Bouton CSV
+st.download_button("Télécharger CSV complet",
+                   data=daily.to_csv(index=False),
+                   file_name="be_dayahead_2023_2025.csv",
+                   mime="text/csv")
