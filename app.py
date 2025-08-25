@@ -87,9 +87,20 @@ fwd_cal = st.sidebar.number_input("Forward CAL (€/MWh) – provisoire", min_va
 fwd_ma  = st.sidebar.number_input("Moyenne 12 mois CAL (€/MWh) – provisoire", min_value=0.0, value=0.0, step=1.0)
 
 # Intervalle: des N derniers jours terminés (évite 'no data' avant publication J+1)
+from datetime import datetime, timedelta, timezone
+
 now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
-end_utc = now_utc.replace(hour=22, minute=0, second=0, microsecond=0)  # 22:00Z ≈ minuit BE (été)
-start_utc = end_utc - timedelta(days=days)
+
+# Dernier jour *certainement publié* = J-1, borné à 22:00Z (≈ minuit BE en été)
+last_published_utc = (now_utc - timedelta(days=1)).replace(
+    hour=22, minute=0, second=0, microsecond=0
+)
+
+# Début = N-1 jours avant ce dernier jour publié
+start_utc = last_published_utc - timedelta(days=days-1)
+
+# Fin EXCLUSIVE = dernier jour publié + 24h
+end_utc = last_published_utc + timedelta(days=1)
 
 # --- Action
 if st.button("Charger / Mettre à jour"):
