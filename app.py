@@ -128,10 +128,24 @@ fwd_cal = st.sidebar.number_input("Forward CAL (€/MWh) – provisoire", min_va
 fwd_ma  = st.sidebar.number_input("Moyenne 12 mois CAL (€/MWh) – provisoire", min_value=0.0, value=0.0, step=1.0)
 
 # ---------------- Intervalle robuste (J-1 uniquement, en UTC)
-now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
-last_published_utc = (now_utc - timedelta(days=1)).replace(hour=22, minute=0, second=0, microsecond=0)
-start_utc = last_published_utc - timedelta(days=days-1)
-end_utc   = last_published_utc + timedelta(days=1)  # exclusif
+import pytz
+from datetime import time
+
+N = days  # nombre de jours du slider
+
+tz_be = pytz.timezone("Europe/Brussels")
+now_be = datetime.now(tz_be)
+
+# dernier jour disponible = hier (en heure Belgique)
+last_day = (now_be.date() - timedelta(days=1))
+
+# intervalle en heure locale Belgique
+start_local = tz_be.localize(datetime.combine(last_day - timedelta(days=N-1), time(0,0)))
+end_local   = tz_be.localize(datetime.combine(last_day + timedelta(days=1), time(0,0)))  # exclusif
+
+# conversion en UTC (exigée par ENTSO-E)
+start_utc = start_local.astimezone(pytz.UTC)
+end_utc   = end_local.astimezone(pytz.UTC)
 
 # ---------------- Action 1 : N derniers jours (spot)
 st.subheader("N derniers jours Day-Ahead 🇧🇪")
