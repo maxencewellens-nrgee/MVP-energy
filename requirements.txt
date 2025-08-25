@@ -1,6 +1,7 @@
-streamlit
+entsoe-py
 pandas
+pytz
+streamlit
 requests
 lxml
-pytz
 python-dateutil
