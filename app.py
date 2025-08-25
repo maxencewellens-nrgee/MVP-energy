@@ -4,6 +4,12 @@ import requests
 from io import StringIO
 from datetime import datetime, timedelta, timezone
 
+from entsoe import EntsoePandasClient
+import pytz
+from datetime import datetime, timedelta
+import pandas as pd
+import streamlit as st
+
 # --- Config page
 st.set_page_config(page_title="BE Day-Ahead – MVP", layout="wide")
 st.title("🇧🇪 BE Day‑Ahead – MVP Timing")
@@ -132,6 +138,25 @@ if st.button("Charger / Mettre à jour"):
         st.metric("Score (0–100)", score)
         st.success(recommendation(score))
 
+        token = st.secrets.get("ENTSOE_TOKEN", "")
+
+st.subheader("Historique Day-Ahead 🇧🇪 (2023 → hier)")
+if st.button("Backfill historique ENTSO‑E"):
+    if not token:
+        st.error("Ajoute ENTSOE_TOKEN dans les Secrets Streamlit.")
+    else:
+        with st.spinner("Récupération ENTSO‑E…"):
+            hist = fetch_dayahead_history_entsoe(token, start_date="2023-01-01")
+        st.success(f"{len(hist)} jours récupérés.")
+        st.line_chart(hist.set_index("date")["avg"])
+        st.dataframe(hist.tail(10), use_container_width=True)
+        st.download_button(
+            "Télécharger CSV historique",
+            data=hist.to_csv(index=False),
+            file_name="be_dayahead_2023_to_yesterday.csv",
+            mime="text/csv"
+        )
+
         st.download_button("Télécharger CSV (jour par jour)",
                            data=daily.to_csv(index=False),
                            file_name="be_dayahead_summary.csv",
@@ -141,3 +166,42 @@ if st.button("Charger / Mettre à jour"):
         st.caption("Vérifie le token, l’URL de l’API et l’intervalle (UTC).")
 else:
     st.info("Clique **Charger / Mettre à jour** pour récupérer les N derniers jours.")
+
+@st.cache_data(ttl=24*3600)
+def fetch_dayahead_history_entsoe(token: str, start_date="2023-01-01", end_date=None):
+    tz = pytz.UTC
+    if end_date is None:
+        # dernier jour publié = hier
+        end_date = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+    start = pd.Timestamp(start_date, tz=tz)
+    end   = pd.Timestamp(end_date, tz=tz) + pd.Timedelta(days=1)  # exclusif
+
+    client = EntsoePandasClient(api_key=token)
+    zone = "10YBE----------2"  # Belgique
+
+    # Boucle mensuelle pour respecter les limites de l’API
+    months = pd.date_range(start.normalize(), end.normalize(), freq="MS", tz=tz)
+    series = []
+    for i, t0 in enumerate(months):
+        t1 = months[i+1] if i+1 < len(months) else end
+        s = client.query_day_ahead_prices(zone, start=t0, end=t1)
+        series.append(s)
+
+    s_all = pd.concat(series).sort_index()
+
+    # Passe en heure Belgique et calcule les agrégats journaliers
+    s_all.index = s_all.index.tz_convert("Europe/Brussels")
+    df = s_all.to_frame("price").copy()
+    df["date"] = df.index.date
+    df["neg"] = (df["price"] < 0).astype(int)
+
+    daily = df.groupby("date").agg(
+        avg=("price","mean"),
+        mn=("price","min"),
+        mx=("price","max"),
+        n=("price","count"),
+        negative_hours=("neg","sum"),
+    ).reset_index()
+
+    daily[["avg","mn","mx"]] = daily[["avg","mn","mx"]].round(2)
+    return daily
