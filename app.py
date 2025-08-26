@@ -422,4 +422,3 @@ if not display_df.empty:
     st.download_button("Télécharger l’historique (CSV)", data=csv_bytes,
                        file_name="clics_blocages.csv", mime="text/csv")
 # ===================== FIN SECTION CONTRAT — UNIQUE =====================
-
