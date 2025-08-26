@@ -159,61 +159,46 @@ else:
     )
     st.altair_chart(chart, use_container_width=True)
 
-  # ----------------------------- Synthèse (REMPLACEMENT ENTIER)
+  # ----------------------------- Synthèse (REMPLACEMENT ENTIER, AUTO-SUFFISANT)
 st.subheader("Synthèse")
 
-# Ligne 1 : KPI spot (inchangé)
-k1, k2, k3 = st.columns(3)
-k1.metric("Moyenne depuis le début visible", f"{overall_avg} €/MWh")
-k2.metric("Moyenne mois en cours (jusqu’à J−1)", f"{month_avg} €/MWh")
-k3.metric("Dernier prix accessible (J−1)", f"{last['avg']:.2f} €/MWh")
+# 0) Récup des données marché affichées (chargées plus haut)
+_daily = st.session_state.get("market_daily", pd.DataFrame())
+if _daily.empty:
+    st.error("Aucune donnée marché chargée (daily vide).")
+else:
+    daily_syn = _daily.copy()
+    # 1) KPI spot
+    overall_avg = round(daily_syn["avg"].mean(), 2)
+    last = daily_syn.iloc[-1]
 
-# Ligne 2 : Forwards CAL (FlexyPower)
-try:
-    cal = fetch_flexypower_cals()
-    cal_date = cal.get("date") or "—"
-    f1, f2, f3 = st.columns(3)
-    f1.metric(f"CAL-26 (élec) – {cal_date}", f"{cal.get('CAL-26'):.2f} €/MWh" if cal.get('CAL-26') is not None else "—")
-    f2.metric(f"CAL-27 (élec) – {cal_date}", f"{cal.get('CAL-27'):.2f} €/MWh" if cal.get('CAL-27') is not None else "—")
-    f3.metric(f"CAL-28 (élec) – {cal_date}", f"{cal.get('CAL-28'):.2f} €/MWh" if cal.get('CAL-28') is not None else "—")
-except Exception as e:
-    st.warning(f"CAL FlexyPower indisponible : {e}")
-
-    # Décision (ancrée sur le dernier prix, garde-fous quantiles)
-    _, _, lookback_use = st.session_state.get("market_params", (start_input, end_input, lookback))
-    rec = decision_from_last(daily, lookback_days=lookback_use)
-    st.subheader("Décision (ancrée sur le dernier prix)")
-    st.info(
-        f"**{rec['reco']}** — {rec['raison']}  \n"
-        f"Références {lookback_use}j : P10 {rec['p10']} · P30 {rec['p30']} · P70 {rec['p70']} €/MWh"
+    # moyenne du mois en cours (sur le mois du dernier jour dispo = J-1)
+    last_day_dt = pd.to_datetime(daily_syn["date"].max())
+    mask_month = (
+        (pd.to_datetime(daily_syn["date"]).dt.year == last_day_dt.year) &
+        (pd.to_datetime(daily_syn["date"]).dt.month == last_day_dt.month)
     )
+    month_avg = round(daily_syn.loc[mask_month, "avg"].mean(), 2)
 
-    # Comparatif spot vs CAL (FlexyPower) si dispo
-    chosen_forward = st.session_state.get("flexy_cal_choice", None)
-    if chosen_forward is not None and isinstance(chosen_forward, (int, float)):
-        last_spot = float(last["avg"])
-        spread = last_spot - chosen_forward
-        st.caption(
-            f"Comparatif spot (J−1) vs produit choisi : {last_spot:.2f} vs {chosen_forward:.2f} €/MWh → spread {spread:.2f}"
-        )
-        p30 = pd.Series(daily["avg"]).quantile(0.30)
-        p70 = pd.Series(daily["avg"]).quantile(0.70)
-        if chosen_forward <= p30 and last_spot <= chosen_forward:
-            st.success("Signal renforcé : CAL sous P30 et spot ≤ CAL → **fixer 20–40%**.")
-        elif chosen_forward >= p70 and last_spot >= chosen_forward:
-            st.warning("Signal affaibli : CAL élevé (≥ P70) et spot ≥ CAL → **attendre**.")
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Moyenne depuis le début visible", f"{overall_avg} €/MWh")
+    k2.metric("Moyenne mois en cours (jusqu’à J−1)", f"{month_avg} €/MWh")
+    k3.metric("Dernier prix accessible (J−1)", f"{last['avg']:.2f} €/MWh")
 
-    # Tableau + export
-    st.dataframe(daily.tail(14), use_container_width=True)
-    st.download_button(
-        "Télécharger CSV (jour par jour)",
-        data=daily.to_csv(index=False),
-        file_name=f"be_dayahead_{start_input}_to_{end_input}.csv",
-        mime="text/csv"
-    )
+    # 2) Forwards CAL (FlexyPower) — garde ton helper fetch_flexypower_cals() plus haut
+    try:
+        cal = fetch_flexypower_cals()
+        cal_date = cal.get("date") or "—"
+        f1, f2, f3 = st.columns(3)
+        f1.metric(f"CAL-26 (élec) – {cal_date}",
+                  f"{cal.get('CAL-26'):.2f} €/MWh" if cal.get('CAL-26') is not None else "—")
+        f2.metric(f"CAL-27 (élec) – {cal_date}",
+                  f"{cal.get('CAL-27'):.2f} €/MWh" if cal.get('CAL-27') is not None else "—")
+        f3.metric(f"CAL-28 (élec) – {cal_date}",
+                  f"{cal.get('CAL-28'):.2f} €/MWh" if cal.get('CAL-28') is not None else "—")
+    except Exception as e:
+        st.warning(f"CAL FlexyPower indisponible : {e}")
 
-    # (facultatif) petite note technique
-    st.caption(f"Intervalle chargé automatiquement : {start_input} → {end_input} (fin incluse = J−1)")
 
 # ----------------------------- Contrat : formulaire & couverture
 st.subheader("Contrat client — entrées")
