@@ -88,7 +88,6 @@ def decision_from_last(daily: pd.DataFrame, lookback_days: int = 180) -> dict:
 @st.cache_data(ttl=60*30)
 
 # --- FlexyPower: robuste (normal -> fallback via r.jina.ai -> read_html) ---
-import html as ihtml, unicodedata, urllib.parse
 
 @st.cache_data(ttl=60*30)
 def fetch_flexypower_cals(url: str = "https://flexypower.eu/prix-de-lenergie/", debug: bool = False) -> dict:
