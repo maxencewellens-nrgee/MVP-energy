@@ -285,42 +285,107 @@ else:
         st.warning(f"CAL FlexyPower indisponible : {e}")
 
     
-# ----------------------------- Contrat : formulaire & couverture
-st.subheader("Contrat client — entrées")
-with st.form("form_contrat"):
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        date_debut_contrat = st.date_input("Date début contrat", value=date(datetime.now().year, 1, 1))
-    with col2:
-        duree_contrat_mois = st.radio("Durée du contrat", options=[12, 24, 36], index=2, format_func=lambda m: f"{m//12} an(s)")
-    with col3:
-        volume_total_mwh = st.number_input("Volume total (MWh)", min_value=0.0, value=200.0, step=10.0)
+# ===================== CONTRAT — VOLUME & CLICS (REMPLACEMENT ENTIER) =====================
+st.markdown("---")
+st.subheader("Contrat client — entrées & clics")
 
-    col4, col5 = st.columns(2)
-    with col4:
-        volume_deja_fixe_mwh = st.number_input("Volume déjà fixé (MWh)", min_value=0.0, value=120.0, step=10.0)
-    with col5:
-        prix_fixe_moyen = st.number_input("Prix fixe moyen (€/MWh)", min_value=0.0, value=85.0, step=1.0)
+# --- 0) État initial en session
+if "contrat_total_mwh" not in st.session_state:
+    st.session_state["contrat_total_mwh"] = 200.0  # valeur par défaut
+if "contrat_fixes" not in st.session_state:
+    # liste de dicts: {"date": date, "price": float €/MWh, "volume": float MWh}
+    st.session_state["contrat_fixes"] = []
 
-    submit_contrat = st.form_submit_button("Mettre à jour le contrat")
+# --- 1) Paramètres principaux (volume total)
+colA, colB = st.columns([2,1])
+with colA:
+    total_mwh = st.number_input("Volume total (MWh)", min_value=0.0,
+                                value=float(st.session_state["contrat_total_mwh"]), step=10.0,
+                                help="Volume total du contrat à couvrir.")
+    st.session_state["contrat_total_mwh"] = total_mwh
 
-if submit_contrat:
-    # Fin = début + durée - 1 jour
-    date_fin_contrat = (date_debut_contrat + relativedelta(months=duree_contrat_mois)) - timedelta(days=1)
+# --- 2) Formulaire d'ajout d'un 'clic' (blocage)
+with st.expander("Ajouter un clic (blocage)"):
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        d_click = st.date_input("Date du clic", value=date.today(), key="click_date")
+    with c2:
+        p_click = st.number_input("Prix (€/MWh)", min_value=0.0, value=0.0, step=0.1, key="click_price")
+    with c3:
+        v_click = st.number_input("Volume (MWh)", min_value=0.0, value=0.0, step=1.0, key="click_volume")
 
-    # Couverture %
-    couverture_pct = 0.0 if volume_total_mwh == 0 else min(100.0, round(100 * volume_deja_fixe_mwh / volume_total_mwh, 2))
-    reste_mwh = max(0.0, volume_total_mwh - volume_deja_fixe_mwh)
+    add = st.button("➕ Ajouter ce clic")
+    if add:
+        if v_click <= 0 or p_click <= 0:
+            st.warning("Prix et volume doivent être > 0.")
+        else:
+            st.session_state["contrat_fixes"].append({
+                "date": d_click,
+                "price": float(p_click),
+                "volume": float(v_click),
+            })
+            st.success("Clic ajouté.")
+            # reset inputs (optionnel)
+            st.session_state["click_price"] = 0.0
+            st.session_state["click_volume"] = 0.0
 
-    st.success(f"Début : **{fmt_be(date_debut_contrat)}**  ·  Fin : **{fmt_be(date_fin_contrat)}**")
+# --- 3) Tableau des clics + suppression
+fixes_df = pd.DataFrame(st.session_state["contrat_fixes"])
+if not fixes_df.empty:
+    # % calculé par rapport au total
+    fixes_df = fixes_df.copy()
+    fixes_df["pct_total_%"] = fixes_df["volume"].apply(
+        lambda v: round((v / total_mwh * 100.0), 2) if total_mwh > 0 else 0.0
+    )
+    fixes_df["date"] = pd.to_datetime(fixes_df["date"]).dt.date
 
-    # "Couverture du contrat en cours" (titre + chiffres)
-    st.subheader("Couverture du contrat en cours")
-    cA, cB, cC = st.columns(3)
-    cA.metric("Couverture", f"{couverture_pct:.1f} %")
-    cB.metric("Fixé", f"{volume_deja_fixe_mwh:.0f} MWh")
-    cC.metric("À fixer", f"{reste_mwh:.0f} MWh")
+    st.markdown("**Clics enregistrés**")
+    st.dataframe(
+        fixes_df.rename(columns={
+            "date": "Date",
+            "price": "Prix (€/MWh)",
+            "volume": "Volume (MWh)",
+            "pct_total_%": "% du total"
+        }),
+        use_container_width=True
+    )
 
-    # (Optionnel) rappel prix marché vs prix fixe moyen
-    st.caption(f"Référence : Prix fixe moyen **{prix_fixe_moyen:.2f} €/MWh**."
-               " Pour une décision, croisez avec la section 'Décision (ancrée sur le dernier prix)'.")
+    # Suppression d'une ligne
+    del_col1, del_col2 = st.columns([3,1])
+    with del_col1:
+        idx_to_delete = st.selectbox(
+            "Supprimer un clic (sélectionne la ligne)",
+            options=list(range(len(fixes_df))),
+            format_func=lambda i: f"{i+1} — {fixes_df.iloc[i]['date']} | {fixes_df.iloc[i]['volume']} MWh @ {fixes_df.iloc[i]['price']} €/MWh",
+            index=0
+        )
+    with del_col2:
+        if st.button("🗑️ Supprimer"):
+            st.session_state["contrat_fixes"].pop(int(idx_to_delete))
+            st.experimental_rerun()
+else:
+    st.info("Aucun clic enregistré pour l’instant.")
+
+# --- 4) Synthèse contrat (totaux, restant, % couverture, prix moyen pondéré)
+fixes_df = pd.DataFrame(st.session_state["contrat_fixes"])
+fixed_mwh = float(fixes_df["volume"].sum()) if not fixes_df.empty else 0.0
+restant_mwh = max(0.0, total_mwh - fixed_mwh)
+pct_couverture = round((fixed_mwh / total_mwh * 100.0), 2) if total_mwh > 0 else 0.0
+pmp = round((fixes_df["price"].mul(fixes_df["volume"]).sum() / fixed_mwh), 2) if fixed_mwh > 0 else None
+
+st.subheader("Couverture du contrat en cours")
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Volume total", f"{total_mwh:.0f} MWh")
+m2.metric("Total fixé", f"{fixed_mwh:.0f} MWh")
+m3.metric("Total restant à cliquer", f"{restant_mwh:.0f} MWh")
+m4.metric("Couverture", f"{pct_couverture:.1f} %")
+
+# Affiche le prix moyen pondéré des clics si dispo
+if pmp is not None:
+    st.caption(f"Prix moyen pondéré des clics : **{pmp:.2f} €/MWh**")
+
+# Export CSV (historique des clics)
+if not fixes_df.empty:
+    csv_bytes = fixes_df.to_csv(index=False).encode("utf-8")
+    st.download_button("Télécharger l’historique des clics (CSV)", data=csv_bytes,
+                       file_name="clics_blocages.csv", mime="text/csv")
