@@ -13,6 +13,57 @@ import urllib.parse
 
 # ----------------------------- Config
 st.set_page_config(page_title="MVP Énergie — BE Day-Ahead", layout="wide")
+# --- Responsive / Desktop polish ---
+st.markdown("""
+<style>
+/* élargit le conteneur central sur desktop */
+.block-container {max-width: 1200px; padding-top: 0.5rem;}
+
+/* sidebar un peu plus large sur PC */
+@media (min-width: 992px) {
+  [data-testid="stSidebar"] {min-width: 320px; max-width: 340px;}
+}
+
+/* réduit l’espace au-dessus des titres */
+h1, h2, h3 { margin-top: 0.4rem; }
+
+/* harmonise les métriques */
+[data-testid="stMetricValue"] { font-size: 1.4rem; }
+[data-testid="stMetricLabel"] { opacity: 0.8; }
+
+/* petit boost de netteté du graphe */
+.vega-embed canvas { image-rendering: -webkit-optimize-contrast; }
+</style>
+""", unsafe_allow_html=True)
+
+# ----------------------------- Historique (centré sur desktop)
+st.subheader("Historique prix marché électricité")
+mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
+
+# colonne centrale large + marges latérales qui s’écrasent sur mobile
+left, center, right = st.columns([0.05, 0.90, 0.05])
+with center:
+    vis = daily.copy()
+    vis["date"] = pd.to_datetime(vis["date"])
+    vis = vis.sort_values("date")
+    vis["sma"] = vis["avg"].rolling(window=int(mm_window), min_periods=max(5, int(mm_window)//3)).mean()
+
+    price_line = (
+        alt.Chart(vis)
+        .mark_line()
+        .encode(
+            x=alt.X("date:T", title="Date"),
+            y=alt.Y("avg:Q", title="€/MWh"),
+            tooltip=[alt.Tooltip("date:T", title="Date"),
+                     alt.Tooltip("avg:Q", title="BE spot (€/MWh)", format=".2f"),
+                     alt.Tooltip("sma:Q", title=f"SMA {mm_window}j", format=".2f")]
+        )
+    )
+    sma_line = alt.Chart(vis.dropna(subset=["sma"])).mark_line(strokeWidth=3).encode(x="date:T", y="sma:Q")
+
+    chart = (price_line + sma_line).properties(height=420, width="container")
+    st.altair_chart(chart, use_container_width=True)
+
 st.title("Gestion contrat; recommandation & prise de décision")
 
 # ----------------------------- Secrets / Token
@@ -246,16 +297,13 @@ chart = (price_line + sma_line).properties(height=420, width="container")
 st.altair_chart(chart, use_container_width=True)
 
 
-# ----------------------------- Synthèse (unique)
+# ----------------------------- Synthèse (rangée)
 st.subheader("Synthèse")
-
 _daily = st.session_state.get("market_daily", pd.DataFrame())
 if _daily.empty:
     st.error("Aucune donnée marché chargée (daily vide).")
 else:
     daily_syn = _daily.copy()
-
-    # KPI spot
     overall_avg = round(daily_syn["avg"].mean(), 2)
     last = daily_syn.iloc[-1]
     last_day_dt = pd.to_datetime(daily_syn["date"].max())
@@ -265,10 +313,14 @@ else:
     )
     month_avg = round(daily_syn.loc[mask_month, "avg"].mean(), 2)
 
-    k1, k2, k3 = st.columns(3)
-    k1.metric("Moyenne depuis le début visible", f"{overall_avg} €/MWh")
-    k2.metric("Moyenne mois en cours (jusqu’à J−1)", f"{month_avg} €/MWh")
-    k3.metric("Dernier prix accessible (J−1)", f"{last['avg']:.2f} €/MWh")
+    # ligne centrée sur desktop
+    l, c, r = st.columns([0.05, 0.90, 0.05])
+    with c:
+        k1, k2, k3 = st.columns([1,1,1])
+        k1.metric("Moyenne depuis le début visible", f"{overall_avg} €/MWh")
+        k2.metric("Moyenne mois en cours (J−1)", f"{month_avg} €/MWh")
+        k3.metric("Dernier prix accessible (J−1)", f"{last['avg']:.2f} €/MWh")
+
 
     # CAL FlexyPower (utilise ta fonction fetch_flexypower_cals() définie plus haut)
     try:
