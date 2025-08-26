@@ -208,7 +208,7 @@ else:
     st.subheader("Historique prix marché électricité")
 
     # GRAND GRAPHIQUE + moyenne mobile
-st.subheader("Historique prix marché électricité")
+st.subheader("Moyenne 30-60-90 jours")
 
 # Choix fenêtre pour la moyenne mobile
 mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
