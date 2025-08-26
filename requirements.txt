@@ -5,3 +5,4 @@ lxml
 pytz
 python-dateutil
 entsoe-py
+altair
