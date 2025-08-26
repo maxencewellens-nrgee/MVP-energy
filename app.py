@@ -326,8 +326,7 @@ with st.expander("Ajouter un clic (blocage)"):
             })
             st.success("Clic ajouté.")
             # reset inputs (optionnel)
-            st.session_state["click_price"] = 0.0
-            st.session_state["click_volume"] = 0.0
+        
 
 # ===== Affichage sous le formulaire : synthèse des clics + totaux =====
 fixes = st.session_state.get("contrat_fixes", [])
