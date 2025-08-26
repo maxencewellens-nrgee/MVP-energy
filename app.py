@@ -36,35 +36,50 @@ h1, h2, h3 { margin-top: 0.4rem; }
 </style>
 """, unsafe_allow_html=True)
 
-# ----------------------------- Historique (centré sur desktop)
+# ----------------------------- Historique prix marché électricité (SÛR)
 st.subheader("Historique prix marché électricité")
-mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
 
-# colonne centrale large + marges latérales qui s’écrasent sur mobile
-left, center, right = st.columns([0.05, 0.90, 0.05])
-with center:
-    vis = daily.copy()
+# Récupère les données chargées (remplies plus haut lors du load auto)
+_daily = st.session_state.get("market_daily", pd.DataFrame())
+if _daily.empty:
+    st.error("Aucune donnée marché chargée (daily vide).")
+else:
+    # Choix de la fenêtre de moyenne mobile
+    mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
+
+    # Prépare le DataFrame pour Altair
+    vis = _daily.copy()
     vis["date"] = pd.to_datetime(vis["date"])
     vis = vis.sort_values("date")
-    vis["sma"] = vis["avg"].rolling(window=int(mm_window), min_periods=max(5, int(mm_window)//3)).mean()
+    vis["sma"] = vis["avg"].rolling(
+        window=int(mm_window),
+        min_periods=max(5, int(mm_window)//3)
+    ).mean()
 
-    price_line = (
-        alt.Chart(vis)
-        .mark_line()
-        .encode(
-            x=alt.X("date:T", title="Date"),
-            y=alt.Y("avg:Q", title="€/MWh"),
-            tooltip=[alt.Tooltip("date:T", title="Date"),
-                     alt.Tooltip("avg:Q", title="BE spot (€/MWh)", format=".2f"),
-                     alt.Tooltip("sma:Q", title=f"SMA {mm_window}j", format=".2f")]
+    # Centrage du graphe sur desktop
+    left, center, right = st.columns([0.05, 0.90, 0.05])
+    with center:
+        price_line = (
+            alt.Chart(vis)
+            .mark_line()
+            .encode(
+                x=alt.X("date:T", title="Date"),
+                y=alt.Y("avg:Q", title="€/MWh"),
+                tooltip=[
+                    alt.Tooltip("date:T", title="Date"),
+                    alt.Tooltip("avg:Q", title="BE spot (€/MWh)", format=".2f"),
+                    alt.Tooltip("sma:Q", title=f"SMA {mm_window}j", format=".2f"),
+                ],
+            )
         )
-    )
-    sma_line = alt.Chart(vis.dropna(subset=["sma"])).mark_line(strokeWidth=3).encode(x="date:T", y="sma:Q")
+        sma_line = (
+            alt.Chart(vis.dropna(subset=["sma"]))
+            .mark_line(strokeWidth=3)
+            .encode(x="date:T", y="sma:Q")
+        )
+        chart = (price_line + sma_line).properties(height=420, width="container")
+        st.altair_chart(chart, use_container_width=True)
 
-    chart = (price_line + sma_line).properties(height=420, width="container")
-    st.altair_chart(chart, use_container_width=True)
-
-st.title("Gestion contrat; recommandation & prise de décision")
 
 # ----------------------------- Secrets / Token
 TOKEN = st.secrets.get("ENTSOE_TOKEN", "")
