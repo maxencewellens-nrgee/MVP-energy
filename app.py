@@ -13,7 +13,7 @@ import urllib.parse
 
 # ----------------------------- Config
 st.set_page_config(page_title="MVP Énergie — BE Day-Ahead", layout="wide")
-st.title("Gestion contrat futur, Recommandation & Prise de décision")
+st.title("Gestion contrat; recommandation & prise de décision")
 
 # ----------------------------- Secrets / Token
 TOKEN = st.secrets.get("ENTSOE_TOKEN", "")
