@@ -165,7 +165,7 @@ def fetch_flexypower_cals(url: str = "https://flexypower.eu/prix-de-lenergie/", 
 # ----------------------------- Marché : bornes automatiques (sans UI)
 today_be = datetime.now(tz_be).date()
 END_INCLUSIVE = str(today_be - timedelta(days=1))   # J-1
-START_HISTORY = "2023-01-01"                        # élargis si tu veux plus long
+START_HISTORY = "2025-01-01"                        # élargis si tu veux plus long
 LOOKBACK_DAYS = 180                                 # pour les quantiles (non visible côté client)
 
 # Variables utilisées plus bas (pas d’UI publique)
