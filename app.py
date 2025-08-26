@@ -285,42 +285,48 @@ else:
         st.warning(f"CAL FlexyPower indisponible : {e}")
 
     
-# ----------------------------- Contrat : formulaire & couverture
-st.subheader("Contrat client — entrées")
-with st.form("form_contrat"):
-    col1, col2, col3 = st.columns(3)
+# ===================== CONTRAT — FORMULAIRE DANS LA SIDEBAR =====================
+with st.sidebar.form("form_contrat"):
+    st.subheader("Contrat client — entrées")
+    col1, col2 = st.columns(2)
     with col1:
-        date_debut_contrat = st.date_input("Date début contrat", value=date(datetime.now().year, 1, 1))
+        date_debut_contrat = st.date_input("Début", value=date(datetime.now().year, 1, 1))
+        volume_total_mwh   = st.number_input("Volume total (MWh)", min_value=0.0, value=200.0, step=10.0)
+        prix_fixe_moyen    = st.number_input("Prix fixe moyen (€/MWh)", min_value=0.0, value=85.0, step=1.0)
     with col2:
-        duree_contrat_mois = st.radio("Durée du contrat", options=[12, 24, 36], index=2, format_func=lambda m: f"{m//12} an(s)")
-    with col3:
-        volume_total_mwh = st.number_input("Volume total (MWh)", min_value=0.0, value=200.0, step=10.0)
+        duree_contrat_mois = st.radio("Durée", options=[12, 24, 36], index=2, format_func=lambda m: f"{m//12} an(s)")
+        volume_deja_fixe_mwh = st.number_input("Déjà fixé (MWh)", min_value=0.0, value=120.0, step=10.0)
 
-    col4, col5 = st.columns(2)
-    with col4:
-        volume_deja_fixe_mwh = st.number_input("Volume déjà fixé (MWh)", min_value=0.0, value=120.0, step=10.0)
-    with col5:
-        prix_fixe_moyen = st.number_input("Prix fixe moyen (€/MWh)", min_value=0.0, value=85.0, step=1.0)
+    apply_contrat = st.form_submit_button("Appliquer")
 
-    submit_contrat = st.form_submit_button("Mettre à jour le contrat")
-
-if submit_contrat:
-    # Fin = début + durée - 1 jour
+# Calcul + persistance dans la session (pour affichage au centre)
+if apply_contrat:
     date_fin_contrat = (date_debut_contrat + relativedelta(months=duree_contrat_mois)) - timedelta(days=1)
-
-    # Couverture %
     couverture_pct = 0.0 if volume_total_mwh == 0 else min(100.0, round(100 * volume_deja_fixe_mwh / volume_total_mwh, 2))
     reste_mwh = max(0.0, volume_total_mwh - volume_deja_fixe_mwh)
 
-    st.success(f"Début : **{fmt_be(date_debut_contrat)}**  ·  Fin : **{fmt_be(date_fin_contrat)}**")
+    st.session_state["contrat"] = {
+        "debut": date_debut_contrat,
+        "fin": date_fin_contrat,
+        "vtot": volume_total_mwh,
+        "vfix": volume_deja_fixe_mwh,
+        "prixfixe": prix_fixe_moyen,
+        "pct": couverture_pct,
+        "reste": reste_mwh,
+    }
 
-    # "Couverture du contrat en cours" (titre + chiffres)
+# ===================== CONTRAT — AFFICHAGE AU CENTRE =====================
+if "contrat" in st.session_state:
+    c = st.session_state["contrat"]
     st.subheader("Couverture du contrat en cours")
-    cA, cB, cC = st.columns(3)
-    cA.metric("Couverture", f"{couverture_pct:.1f} %")
-    cB.metric("Fixé", f"{volume_deja_fixe_mwh:.0f} MWh")
-    cC.metric("À fixer", f"{reste_mwh:.0f} MWh")
+    st.success(f"Début : **{fmt_be(c['debut'])}**  ·  Fin : **{fmt_be(c['fin'])}**")
 
-    # (Optionnel) rappel prix marché vs prix fixe moyen
-    st.caption(f"Référence : Prix fixe moyen **{prix_fixe_moyen:.2f} €/MWh**."
-               " Pour une décision, croisez avec la section 'Décision (ancrée sur le dernier prix)'.")
+    cA, cB, cC = st.columns(3)
+    cA.metric("Couverture", f"{c['pct']:.1f} %")
+    cB.metric("Fixé", f"{c['vfix']:.0f} MWh")
+    cC.metric("À fixer", f"{c['reste']:.0f} MWh")
+
+    st.caption(
+        f"Prix fixe moyen **{c['prixfixe']:.2f} €/MWh** — compare à la section Synthèse/Recommandation."
+    )
+
