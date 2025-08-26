@@ -188,16 +188,96 @@ else:
     # 2) Forwards CAL (FlexyPower) — garde ton helper fetch_flexypower_cals() plus haut
     try:
         cal = fetch_flexypower_cals()
-        cal_date = cal.get("date") or "—"
-        f1, f2, f3 = st.columns(3)
-        f1.metric(f"CAL-26 (élec) – {cal_date}",
-                  f"{cal.get('CAL-26'):.2f} €/MWh" if cal.get('CAL-26') is not None else "—")
-        f2.metric(f"CAL-27 (élec) – {cal_date}",
-                  f"{cal.get('CAL-27'):.2f} €/MWh" if cal.get('CAL-27') is not None else "—")
-        f3.metric(f"CAL-28 (élec) – {cal_date}",
-                  f"{cal.get('CAL-28'):.2f} €/MWh" if cal.get('CAL-28') is not None else "—")
+        # ---- REMPLACEMENT ENTIER du helper FlexyPower ----
+import html as ihtml, unicodedata
+
+@st.cache_data(ttl=60*30)
+def fetch_flexypower_cals(url: str = "https://flexypower.eu/prix-de-lenergie/", debug: bool = False) -> dict:
+    """
+    Scrape FlexyPower pour CAL-26/27/28 (Electricite) + date 'JJ/MM/AAAA'.
+    Renvoie {'CAL-26': float|None, 'CAL-27': float|None, 'CAL-28': float|None, 'date': str|None, '_debug': dict}
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache",
+    }
+    out = {"CAL-26": None, "CAL-27": None, "CAL-28": None, "date": None, "_debug": {}}
+    try:
+        r = requests.get(url, headers=headers, timeout=25)
+        out["_debug"]["status"] = r.status_code
+        out["_debug"]["len_html"] = len(r.text)
+        r.raise_for_status()
+        raw = r.text
+
+        # 1) Décode entités HTML, remplace NBSP, normalise accents (é->e) et casse
+        txt = ihtml.unescape(raw).replace("\xa0", " ")
+        txt = unicodedata.normalize("NFKD", txt).encode("ascii", "ignore").decode("ascii")
+        # -> "Electricite", "Gaz naturel", etc.
+        # garde une version compacte pour regex
+        txt_compact = re.sub(r"\s+", " ", txt)
+
+        # 2) Isole bloc "Electricite ... (avant Gaz/section suivante)"
+        m_elec = re.search(r"Electricite.*?(?=Gaz naturel|<h2|</section>|$)", txt_compact, flags=re.I)
+        block = m_elec.group(0) if m_elec else txt_compact  # si pas trouvé, on tente sur tout le doc
+        out["_debug"]["elec_block_found"] = bool(m_elec)
+
+        # 3) Date JJ/MM/AAAA (si présente)
+        dm = re.search(r"\b(\d{2}/\d{2}/\d{4})\b", block)
+        if dm: out["date"] = dm.group(1)
+
+        # 4) Regex tolérant pour CAL-26/27/28
+        # accepte "CAL 26" ou "CAL-26" puis valeur avec virgule/point (éventuel €)
+        for yy in ("26", "27", "28"):
+            m = re.search(rf"CAL\s*[-]?\s*{yy}\D*?([0-9]+(?:[.,][0-9]+)?)", block, flags=re.I)
+            if m:
+                val = m.group(1).replace(",", ".")
+                try:
+                    out[f"CAL-{yy}"] = float(val)
+                except:
+                    out[f"CAL-{yy}"] = None
+
+        # 5) Si rien trouvé, tentative via pandas.read_html (si table HTML réelle)
+        if all(out[k] is None for k in ("CAL-26","CAL-27","CAL-28")):
+            try:
+                tables = pd.read_html(raw)  # nécessite lxml (déjà dans requirements)
+                out["_debug"]["tables"] = len(tables)
+                for df in tables:
+                    df_columns = [str(c).strip().upper() for c in df.columns]
+                    # On cherche une colonne produit et une colonne prix
+                    prod_col = next((c for c in df_columns if "PRODUIT" in c or "PRODUCT" in c or "CAL" == c), None)
+                    price_col = next((c for c in df_columns if "PRIX" in c or "PRICE" in c), None)
+                    if prod_col is None or price_col is None:
+                        # fallback: suppose colonnes 0/1
+                        if len(df.columns) >= 2:
+                            prod_col, price_col = df.columns[0], df.columns[1]
+                        else:
+                            continue
+                    # normalise
+                    df2 = df.copy()
+                    df2.columns = [str(c).strip() for c in df2.columns]
+                    for yy in ("26","27","28"):
+                        mask = df2[prod_col].astype(str).str.upper().str.contains(f"CAL[- ]?{yy}")
+                        if mask.any():
+                            rawv = str(df2.loc[mask, price_col].iloc[0])
+                            rawv = rawv.replace("\xa0"," ").replace("€","").strip()
+                            rawv = re.sub(r"[^\d,\.]", "", rawv).replace(",", ".")
+                            try:
+                                out[f"CAL-{yy}"] = float(rawv)
+                            except:
+                                pass
+            except Exception as e2:
+                out["_debug"]["read_html_error"] = str(e2)
+
+        if debug:
+            st.write("DEBUG FlexyPower:", out["_debug"])
+        return out
     except Exception as e:
-        st.warning(f"CAL FlexyPower indisponible : {e}")
+        out["_debug"]["exception"] = str(e)
+        if debug:
+            st.write("DEBUG FlexyPower Exception:", out["_debug"])
+        return out
 
 
 # ----------------------------- Contrat : formulaire & couverture
