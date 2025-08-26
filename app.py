@@ -207,19 +207,44 @@ else:
     # Titre demandé
     st.subheader("Historique prix marché électricité")
 
-    # GRAND GRAPHIQUE
-    vis = daily.copy()
-    vis["date"] = pd.to_datetime(vis["date"])
-    chart = (
-        alt.Chart(vis)
-        .mark_line()
-        .encode(
-            x=alt.X("date:T", title="Date"),
-            y=alt.Y("avg:Q", title="€/MWh")
-        )
-        .properties(height=420, width="container")
+    # GRAND GRAPHIQUE + moyenne mobile
+st.subheader("Historique prix marché électricité")
+
+# Choix fenêtre pour la moyenne mobile
+mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
+
+vis = daily.copy()
+vis["date"] = pd.to_datetime(vis["date"])
+# moyenne mobile simple (SMA). min_periods pour éviter trous au début
+vis = vis.sort_values("date")
+vis["sma"] = vis["avg"].rolling(window=int(mm_window), min_periods=max(5, int(mm_window)//3)).mean()
+
+price_line = (
+    alt.Chart(vis)
+    .mark_line()
+    .encode(
+        x=alt.X("date:T", title="Date"),
+        y=alt.Y("avg:Q", title="€/MWh"),
+        color=alt.value("#1f2937"),  # ligne principale (optionnel)
+        tooltip=[alt.Tooltip("date:T", title="Date"),
+                 alt.Tooltip("avg:Q", title="BE spot (€/MWh)", format=".2f"),
+                 alt.Tooltip("sma:Q", title=f"SMA {mm_window}j (€/MWh)", format=".2f")]
     )
-    st.altair_chart(chart, use_container_width=True)
+)
+
+sma_line = (
+    alt.Chart(vis.dropna(subset=["sma"]))
+    .mark_line(strokeWidth=3)
+    .encode(
+        x="date:T",
+        y="sma:Q",
+        color=alt.value("#22c55e")  # vert pour la moyenne (optionnel)
+    )
+)
+
+chart = (price_line + sma_line).properties(height=420, width="container")
+st.altair_chart(chart, use_container_width=True)
+
 
 # ----------------------------- Synthèse (unique)
 st.subheader("Synthèse")
