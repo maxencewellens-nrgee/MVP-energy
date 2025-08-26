@@ -333,32 +333,34 @@ fixes = st.session_state.get("contrat_fixes", [])
 total_mwh = float(st.session_state.get("contrat_total_mwh", 0.0))
 
 fixes_df = pd.DataFrame(fixes)
+
 if fixes_df.empty:
     st.info("Aucun clic enregistré pour l’instant.")
 else:
-    # Tableau des clics
+    # -- données internes (colonnes brutes: date, price, volume)
     fixes_df = fixes_df.copy()
     fixes_df["date"] = pd.to_datetime(fixes_df["date"]).dt.date
-    fixes_df["% du total"] = fixes_df["volume"].apply(
+    fixes_df["pct_total"] = fixes_df["volume"].apply(
         lambda v: round((v / total_mwh * 100.0), 2) if total_mwh > 0 else 0.0
     )
 
-    st.markdown("### Clics enregistrés")
-    st.dataframe(
-        fixes_df.rename(columns={
-            "date": "Date",
-            "price": "Prix (€/MWh)",
-            "volume": "Volume (MWh)"
-        })[["Date", "Prix (€/MWh)", "Volume (MWh)", "% du total"]],
-        use_container_width=True
-    )
+    # -- tableau pour affichage (copie renommée)
+    display_df = fixes_df.rename(columns={
+        "date": "Date",
+        "price": "Prix (€/MWh)",
+        "volume": "Volume (MWh)",
+        "pct_total": "% du total",
+    })[["Date", "Prix (€/MWh)", "Volume (MWh)", "% du total"]]
 
-    # Totaux
-    fixed_mwh = float(fixes_df["Volume (MWh)"].sum())
+    st.markdown("### Clics enregistrés")
+    st.dataframe(display_df, use_container_width=True)
+
+    # -- totaux et métriques (utiliser les colonnes brutes !)
+    fixed_mwh = float(fixes_df["volume"].sum())
     restant_mwh = max(0.0, total_mwh - fixed_mwh)
     pct_couverture = round((fixed_mwh / total_mwh * 100.0), 2) if total_mwh > 0 else 0.0
     pmp = round(
-        (fixes_df["Prix (€/MWh)"] * fixes_df["Volume (MWh)"]).sum() / fixed_mwh, 2
+        (fixes_df["price"] * fixes_df["volume"]).sum() / fixed_mwh, 2
     ) if fixed_mwh > 0 else None
 
     st.markdown("### Synthèse du contrat")
@@ -371,13 +373,11 @@ else:
     if pmp is not None:
         st.caption(f"Prix moyen pondéré des clics : **{pmp:.2f} €/MWh**")
 
-    # (optionnel) barre de progression
-    st.progress(min(1.0, pct_couverture/100.0))
-
     # Export CSV
-    csv = fixes_df.rename(columns={"% du total":"pct_total_%"}).to_csv(index=False).encode("utf-8")
-    st.download_button("Télécharger l’historique des clics (CSV)", data=csv,
-                       file_name="clics_blocages.csv", mime="text/csv")
+    csv = display_df.to_csv(index=False).encode("utf-8")
+    st.download_button("Télécharger l’historique des clics (CSV)",
+                       data=csv, file_name="clics_blocages.csv", mime="text/csv")
+
 
 # --- 3) Tableau des clics + suppression
 fixes_df = pd.DataFrame(st.session_state["contrat_fixes"])
