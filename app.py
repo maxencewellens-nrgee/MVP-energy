@@ -10,7 +10,7 @@ import pytz
 
 # ----------------------------- Config
 st.set_page_config(page_title="MVP Énergie — BE Day-Ahead", layout="wide")
-st.title("🇧🇪 Électricité — Historique J-1, Recommandation & Contrat")
+st.title("Gestion contrat futur, Recommandation & Prise de décision")
 
 # ----------------------------- Secrets / Token
 TOKEN = st.secrets.get("ENTSOE_TOKEN", "")
