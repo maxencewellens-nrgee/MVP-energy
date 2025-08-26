@@ -86,80 +86,91 @@ def decision_from_last(daily: pd.DataFrame, lookback_days: int = 180) -> dict:
 @st.cache_data(ttl=60*30)
 
 @st.cache_data(ttl=60*30)
+
+# --- FlexyPower: robuste (normal -> fallback via r.jina.ai -> read_html) ---
+import html as ihtml, unicodedata, urllib.parse
+
+@st.cache_data(ttl=60*30)
 def fetch_flexypower_cals(url: str = "https://flexypower.eu/prix-de-lenergie/", debug: bool = False) -> dict:
     """
-    Récupère CAL-26/27/28 (électricité) + date JJ/MM/AAAA depuis flexypower.eu.
-    Retour: {'CAL-26': float|None, 'CAL-27': float|None, 'CAL-28': float|None, 'date': str|None}
+    Essaie 3 voies : HTML brut -> proxy textuel (r.jina.ai) -> pandas.read_html.
+    Retour: {'CAL-26':float|None,'CAL-27':...,'CAL-28':...,'date':str|None}
     """
-    headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
-        "Cache-Control": "no-cache",
-    }
-    vals = {"CAL-26": None, "CAL-27": None, "CAL-28": None, "date": None}
-    try:
-        r = requests.get(url, headers=headers, timeout=25)
-        r.raise_for_status()
-        raw = r.text
-
-        # Normalise : entités HTML, espaces, accents
+    def _normalize(raw: str) -> str:
         txt = ihtml.unescape(raw).replace("\xa0", " ")
         txt = unicodedata.normalize("NFKD", txt).encode("ascii", "ignore").decode("ascii")
-        txt_compact = re.sub(r"\s+", " ", txt)
+        return re.sub(r"\s+", " ", txt)
 
-        # Isole bloc Electricite
-        m_elec = re.search(r"Electricite.*?(?=Gaz naturel|<h2|</section>|$)", txt_compact, flags=re.I)
-        block = m_elec.group(0) if m_elec else txt_compact
-
-        # Date JJ/MM/AAAA
+    def _parse_block(text: str) -> dict:
+        vals = {"CAL-26": None, "CAL-27": None, "CAL-28": None, "date": None}
+        # isole bloc Electricite si possible
+        m_elec = re.search(r"Electricite.*?(?=Gaz naturel|<h2|</section>|$)", text, flags=re.I)
+        block = m_elec.group(0) if m_elec else text
         dm = re.search(r"\b(\d{2}/\d{2}/\d{4})\b", block)
-        if dm:
-            vals["date"] = dm.group(1)
-
-        # CAL-26/27/28 (tolère "CAL 26" / "CAL-26")
-        for yy in ("26", "27", "28"):
+        if dm: vals["date"] = dm.group(1)
+        for yy in ("26","27","28"):
             m = re.search(rf"CAL\s*[-]?\s*{yy}\D*?([0-9]+(?:[.,][0-9]+)?)", block, flags=re.I)
             if m:
                 try:
                     vals[f"CAL-{yy}"] = float(m.group(1).replace(",", "."))
-                except:
-                    vals[f"CAL-{yy}"] = None
-
-        # Fallback: tenter read_html si rien trouvé
-        if all(vals[k] is None for k in ("CAL-26", "CAL-27", "CAL-28")):
-            try:
-                tables = pd.read_html(raw)  # nécessite lxml
-                for df in tables:
-                    df_cols_u = [str(c).upper() for c in df.columns]
-                    prod_col = next((c for c in df.columns if str(c).upper() in df_cols_u and
-                                     ("PRODUIT" in str(c).upper() or "PRODUCT" in str(c).upper() or "CAL" == str(c).upper())), None)
-                    price_col = next((c for c in df.columns if "PRIX" in str(c).upper() or "PRICE" in str(c).upper()), None)
-                    if prod_col is None or price_col is None:
-                        if len(df.columns) >= 2:
-                            prod_col, price_col = df.columns[0], df.columns[1]
-                        else:
-                            continue
-                    for yy in ("26", "27", "28"):
-                        mask = df[prod_col].astype(str).str.upper().str.contains(f"CAL[- ]?{yy}")
-                        if mask.any():
-                            rawv = str(df.loc[mask, price_col].iloc[0])
-                            rawv = re.sub(r"[^\d,\.]", "", rawv).replace(",", ".")
-                            try:
-                                vals[f"CAL-{yy}"] = float(rawv)
-                            except:
-                                pass
-            except Exception:
-                pass
-
-        if debug:
-            st.write("DEBUG FlexyPower:", {"len_html": len(raw), "found_elec_block": bool(m_elec), "vals": vals})
+                except: pass
         return vals
 
+    # 1) tentative HTML direct
+    try:
+        r = requests.get(url, headers={
+            "User-Agent":"Mozilla/5.0", "Accept-Language":"fr-FR,fr;q=0.9,en;q=0.8"
+        }, timeout=20)
+        r.raise_for_status()
+        vals = _parse_block(_normalize(r.text))
+        if any(vals[k] is not None for k in ("CAL-26","CAL-27","CAL-28")):
+            if debug: st.write("FlexyPower: direct OK")
+            return vals
     except Exception as e:
-        if debug:
-            st.write("DEBUG FlexyPower Exception:", str(e))
-        return vals
+        if debug: st.write("Flexy direct FAIL:", e)
+
+    # 2) fallback proxy texte (souvent ça contourne JS/anti-bot)
+    try:
+        pr = urllib.parse.urlparse(url)
+        proxy_url = f"https://r.jina.ai/http://{pr.netloc}{pr.path}"
+        r2 = requests.get(proxy_url, headers={"User-Agent":"Mozilla/5.0"}, timeout=20)
+        r2.raise_for_status()
+        vals = _parse_block(_normalize(r2.text))
+        if any(vals[k] is not None for k in ("CAL-26","CAL-27","CAL-28")):
+            if debug: st.write("FlexyPower: proxy r.jina.ai OK")
+            return vals
+    except Exception as e:
+        if debug: st.write("Flexy proxy FAIL:", e)
+
+    # 3) dernier recours: read_html sur la page d’origine
+    try:
+        tables = pd.read_html(url)
+        for df in tables:
+            cols = [str(c).upper() for c in df.columns]
+            prod_col = df.columns[0]
+            price_col = df.columns[1] if len(df.columns)>1 else df.columns[0]
+            for yy in ("26","27","28"):
+                mask = df[prod_col].astype(str).str.upper().str.contains(f"CAL[- ]?{yy}")
+                if mask.any():
+                    rawv = str(df.loc[mask, price_col].iloc[0])
+                    rawv = re.sub(r"[^\d,\.]", "", rawv).replace(",", ".")
+                    try:
+                        outv = float(rawv)
+                    except:
+                        outv = None
+                    # on construit un résultat incrémental
+                    if 'vals' not in locals():
+                        vals = {"CAL-26": None, "CAL-27": None, "CAL-28": None, "date": None}
+                    vals[f"CAL-{yy}"] = outv
+        if 'vals' in locals():
+            if debug: st.write("FlexyPower: read_html OK")
+            return vals
+    except Exception as e:
+        if debug: st.write("Flexy read_html FAIL:", e)
+
+    # échec total
+    return {"CAL-26": None, "CAL-27": None, "CAL-28": None, "date": None}
+
 
 
 # ----------------------------- Marché : bornes automatiques (sans UI)
@@ -211,10 +222,7 @@ else:
     )
     st.altair_chart(chart, use_container_width=True)
 
-  # ----------------------------- Synthèse (REMPLACEMENT ENTIER, AUTO-SUFFISANT)
-st.subheader("Synthèse")
-
-# ----------------------------- Synthèse (remplacement entier, autonome)
+# ----------------------------- Synthèse (unique)
 st.subheader("Synthèse")
 
 _daily = st.session_state.get("market_daily", pd.DataFrame())
@@ -238,7 +246,7 @@ else:
     k2.metric("Moyenne mois en cours (jusqu’à J−1)", f"{month_avg} €/MWh")
     k3.metric("Dernier prix accessible (J−1)", f"{last['avg']:.2f} €/MWh")
 
-    # Forwards CAL (FlexyPower)
+    # CAL FlexyPower (utilise ta fonction fetch_flexypower_cals() définie plus haut)
     try:
         cal = fetch_flexypower_cals()
         cal_date = cal.get("date") or "—"
