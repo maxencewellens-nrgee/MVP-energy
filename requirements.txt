@@ -6,3 +6,4 @@ pytz
 python-dateutil
 entsoe-py
 altair
+import re, requests
