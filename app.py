@@ -111,47 +111,26 @@ def fetch_flexypower_cals(url: str = "https://flexypower.eu/prix-de-lenergie/") 
     return {"electricity": elec_vals, "gas": gas_vals,
             "electricity_date": elec_date, "gas_date": gas_date}
 
-# ----------------------------- Paramètres Marché
+# ----------------------------- Marché : bornes automatiques (sans UI)
 today_be = datetime.now(tz_be).date()
-default_start = "2023-01-01"
-default_end_inclusive = today_be - timedelta(days=1)  # J-1
+END_INCLUSIVE = str(today_be - timedelta(days=1))   # J-1
+START_HISTORY = "2015-01-01"                        # élargis si tu veux plus long
+LOOKBACK_DAYS = 180                                 # pour les quantiles (non visible côté client)
 
-with st.sidebar:
-    st.subheader("Paramètres marché")
-    start_input = st.text_input("Date début (YYYY-MM-DD)", value=default_start)
-    end_input   = st.text_input("Date fin incluse (par défaut J-1)", value=str(default_end_inclusive))
-    lookback    = st.slider("Fenêtre quantiles (jours)", 90, 365, 180, step=30)
-    run_market  = st.button("Charger / Mettre à jour")
+# Variables utilisées plus bas (pas d’UI publique)
+start_input = START_HISTORY
+end_input   = END_INCLUSIVE
+lookback    = LOOKBACK_DAYS
+run_market  = False  # plus de bouton; chargement auto géré dans le bloc suivant
 
-    st.markdown("---")
-    st.subheader("Forwards CAL (FlexyPower)")
-    fw_url  = st.text_input("URL", value="https://flexypower.eu/prix-de-lenergie/")
-    pick_cal = st.selectbox("Produit pour la décision", ["CAL-26","CAL-27","CAL-28"])
-    if st.button("Récupérer CAL"):
-        try:
-            flexy = fetch_flexypower_cals(fw_url)
-            st.success(f"Élec {flexy.get('electricity_date') or '?'} – Gaz {flexy.get('gas_date') or '?'}")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Élec CAL-26", f"{flexy['electricity'].get('CAL-26') or '—'} €/MWh")
-            c2.metric("Élec CAL-27", f"{flexy['electricity'].get('CAL-27') or '—'} €/MWh")
-            c3.metric("Élec CAL-28", f"{flexy['electricity'].get('CAL-28') or '—'} €/MWh")
-            g1, g2, g3 = st.columns(3)
-            g1.metric("Gaz CAL-26",  f"{flexy['gas'].get('CAL-26') or '—'} €/MWh")
-            g2.metric("Gaz CAL-27",  f"{flexy['gas'].get('CAL-27') or '—'} €/MWh")
-            g3.metric("Gaz CAL-28",  f"{flexy['gas'].get('CAL-28') or '—'} €/MWh")
-            st.session_state["flexy_cal_choice"] = flexy["electricity"].get(pick_cal)
-        except Exception as e:
-            st.error(f"Scraping KO : {e}")
-
-# ----------------------------- Marché : chargement & affichage (AUTO + REFRESH)
+# ----------------------------- Marché : chargement & affichage (AUTO)
 def load_market(start_date: str, end_date: str):
     with st.spinner("Récupération ENTSO-E (par mois)…"):
         data = fetch_daily(start_date, end_date)
     return data
 
-# 1) Auto-chargement au premier affichage, sinon rafraîchissement si on clique
-need_load = ("market_daily" not in st.session_state) or run_market
-if need_load:
+# 1) Auto-chargement au premier affichage (et à chaque redeploy/cache clear)
+if "market_daily" not in st.session_state:
     try:
         st.session_state["market_daily"] = load_market(start_input, end_input)
         st.session_state["market_params"] = (start_input, end_input, lookback)
@@ -159,13 +138,15 @@ if need_load:
         st.error(f"Erreur : {e}")
         st.stop()
 
-# 2) Rendu (toujours affiché si on a des données)
+# 2) Rendu permanent (toujours visible)
 daily = st.session_state.get("market_daily", pd.DataFrame())
 if daily.empty:
     st.error("Aucune donnée sur l'intervalle demandé.")
 else:
-    # GRAND GRAPHIQUE historique jusqu'à J-1
+    # Titre demandé
     st.subheader("Historique prix marché électricité")
+
+    # GRAND GRAPHIQUE
     vis = daily.copy()
     vis["date"] = pd.to_datetime(vis["date"])
     chart = (
@@ -195,19 +176,23 @@ else:
     k2.metric("Moyenne mois en cours (jusqu’à J−1)", f"{month_avg} €/MWh")
     k3.metric("Dernier prix accessible (J−1)", f"{last['avg']:.2f} €/MWh")
 
-    # Décision (ancrée sur dernier prix)
-    lookback_use = st.session_state.get("market_params", (None, None, lookback))[2]
+    # Décision (ancrée sur le dernier prix, garde-fous quantiles)
+    _, _, lookback_use = st.session_state.get("market_params", (start_input, end_input, lookback))
     rec = decision_from_last(daily, lookback_days=lookback_use)
     st.subheader("Décision (ancrée sur le dernier prix)")
-    st.info(f"**{rec['reco']}** — {rec['raison']}  \n"
-            f"Références {lookback_use}j : P10 {rec['p10']} · P30 {rec['p30']} · P70 {rec['p70']} €/MWh")
+    st.info(
+        f"**{rec['reco']}** — {rec['raison']}  \n"
+        f"Références {lookback_use}j : P10 {rec['p10']} · P30 {rec['p30']} · P70 {rec['p70']} €/MWh"
+    )
 
-    # Comparatif spot vs CAL (si dispo depuis FlexyPower)
+    # Comparatif spot vs CAL (FlexyPower) si dispo
     chosen_forward = st.session_state.get("flexy_cal_choice", None)
     if chosen_forward is not None and isinstance(chosen_forward, (int, float)):
         last_spot = float(last["avg"])
         spread = last_spot - chosen_forward
-        st.caption(f"Comparatif spot (J−1) vs produit choisi : {last_spot:.2f} vs {chosen_forward:.2f} €/MWh → spread {spread:.2f}")
+        st.caption(
+            f"Comparatif spot (J−1) vs produit choisi : {last_spot:.2f} vs {chosen_forward:.2f} €/MWh → spread {spread:.2f}"
+        )
         p30 = pd.Series(daily["avg"]).quantile(0.30)
         p70 = pd.Series(daily["avg"]).quantile(0.70)
         if chosen_forward <= p30 and last_spot <= chosen_forward:
@@ -224,9 +209,8 @@ else:
         mime="text/csv"
     )
 
-    # Petit récap des bornes réellement utilisées (debug utile)
-    st.caption(f"Intervalle chargé : {start_input} → {end_input} (fin incluse, J−1 recommandé)")
-
+    # (facultatif) petite note technique
+    st.caption(f"Intervalle chargé automatiquement : {start_input} → {end_input} (fin incluse = J−1)")
 
 # ----------------------------- Contrat : formulaire & couverture
 st.subheader("Contrat client — entrées")
