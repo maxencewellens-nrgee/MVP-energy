@@ -165,7 +165,7 @@ if daily.empty:
     st.error("Aucune donnée sur l'intervalle demandé.")
 else:
     # GRAND GRAPHIQUE historique jusqu'à J-1
-    st.subheader("Historique (moyenne journalière jusqu’à J−1)")
+    st.subheader("Historique prix marché électricité")
     vis = daily.copy()
     vis["date"] = pd.to_datetime(vis["date"])
     chart = (
