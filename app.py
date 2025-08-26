@@ -394,24 +394,27 @@ else:
     with col_del1:
         del_idx = st.selectbox(
             "Supprimer un clic",
-            # --- Numérotation des clics à partir de 1 dans le tableau
+          # --- Numérotation des clics à partir de 1 + tableau
 display_df = display_df.copy()
 display_df.index = range(1, len(display_df) + 1)
 display_df.index.name = "Clic #"
 st.dataframe(display_df, use_container_width=True)
 
-# --- Sélecteur + suppression alignés sur cette numérotation
+# --- Sélecteur + suppression (aligné sur l’index 1..N)
 if not display_df.empty:
     del_idx = st.selectbox(
         "Supprimer un clic",
         options=display_df.index.tolist(),  # [1..N]
-        format_func=lambda i: f"{i} — {display_df.loc[i, 'Date']} | "
-                              f"{display_df.loc[i, 'Volume (MWh)']} MWh @ "
-                              f"{display_df.loc[i, 'Prix (€/MWh)']} €/MWh"
+        format_func=lambda i: (
+            f"{i} — {display_df.loc[i, 'Date']} | "
+            f"{display_df.loc[i, 'Volume (MWh)']} MWh @ "
+            f"{display_df.loc[i, 'Prix (€/MWh)']} €/MWh"
+        ),
+        key="delete_click_selector",
     )
+
     if st.button("🗑️ Supprimer la ligne sélectionnée"):
-        # dans la liste Python, l’élément #i est à l’index i-1
-        st.session_state["contract_clicks"].pop(del_idx - 1)
+        st.session_state["contract_clicks"].pop(int(del_idx) - 1)  # liste 0-based
         st.rerun()
 
     # export CSV
