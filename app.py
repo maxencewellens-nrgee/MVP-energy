@@ -143,77 +143,90 @@ with st.sidebar:
         except Exception as e:
             st.error(f"Scraping KO : {e}")
 
-# ----------------------------- Marché : chargement & affichage
-if run_market:
+# ----------------------------- Marché : chargement & affichage (AUTO + REFRESH)
+def load_market(start_date: str, end_date: str):
+    with st.spinner("Récupération ENTSO-E (par mois)…"):
+        data = fetch_daily(start_date, end_date)
+    return data
+
+# 1) Auto-chargement au premier affichage, sinon rafraîchissement si on clique
+need_load = ("market_daily" not in st.session_state) or run_market
+if need_load:
     try:
-        with st.spinner("Récupération ENTSO-E (par mois)…"):
-            daily = fetch_daily(start_input, end_input)
-        if daily.empty:
-            st.error("Aucune donnée sur l'intervalle demandé.")
-        else:
-            # GRAND GRAPHIQUE historique jusqu'à J-1
-            st.subheader("Historique (moyenne journalière jusqu’à J-1)")
-            vis = daily.copy()
-            vis["date"] = pd.to_datetime(vis["date"])
-            chart = (
-                alt.Chart(vis)
-                .mark_line()
-                .encode(
-                    x=alt.X("date:T", title="Date"),
-                    y=alt.Y("avg:Q", title="€/MWh")
-                )
-                .properties(height=420, width="container")
-            )
-            st.altair_chart(chart, use_container_width=True)
-
-            # KPIs en bas (ordre demandé)
-            last = daily.iloc[-1]
-            overall_avg = round(daily["avg"].mean(), 2)
-
-            last_day_dt = pd.to_datetime(daily["date"].max())
-            mask_month = (
-                (pd.to_datetime(daily["date"]).dt.year == last_day_dt.year) &
-                (pd.to_datetime(daily["date"]).dt.month == last_day_dt.month)
-            )
-            month_avg = round(daily.loc[mask_month, "avg"].mean(), 2)
-
-            st.subheader("Synthèse")
-            k1, k2, k3 = st.columns(3)
-            k1.metric("Moyenne depuis le début visible", f"{overall_avg} €/MWh")
-            k2.metric("Moyenne mois en cours (jusqu’à J-1)", f"{month_avg} €/MWh")
-            k3.metric("Dernier prix accessible (J-1)", f"{last['avg']:.2f} €/MWh")
-
-            # Décision (ancrée sur dernier prix + quantiles)
-            st.subheader("Décision (ancrée sur le dernier prix)")
-            rec = decision_from_last(daily, lookback_days=lookback)
-            st.info(f"**{rec['reco']}** — {rec['raison']}  \n"
-                    f"Références {lookback}j : P10 {rec['p10']} · P30 {rec['p30']} · P70 {rec['p70']} €/MWh")
-
-            # Comparatif spot vs CAL (FlexyPower) si dispo
-            chosen_forward = st.session_state.get("flexy_cal_choice", None)
-            if chosen_forward is not None and isinstance(chosen_forward, (int,float)):
-                last_spot = float(last["avg"])
-                spread = last_spot - chosen_forward
-                st.caption(f"Comparatif spot (J-1) vs {pick_cal} : {last_spot:.2f} vs {chosen_forward:.2f} €/MWh → spread {spread:.2f}")
-                p30 = pd.Series(daily["avg"]).quantile(0.30)
-                p70 = pd.Series(daily["avg"]).quantile(0.70)
-                if chosen_forward <= p30 and last_spot <= chosen_forward:
-                    st.success("Signal renforcé : CAL sous P30 et spot ≤ CAL → **fixer 20–40%**.")
-                elif chosen_forward >= p70 and last_spot >= chosen_forward:
-                    st.warning("Signal affaibli : CAL élevé (≥ P70) et spot ≥ CAL → **attendre**.")
-
-            # Tableau + export
-            st.dataframe(daily.tail(14), use_container_width=True)
-            st.download_button(
-                "Télécharger CSV (jour par jour)",
-                data=daily.to_csv(index=False),
-                file_name=f"be_dayahead_{start_input}_to_{end_input}.csv",
-                mime="text/csv"
-            )
+        st.session_state["market_daily"] = load_market(start_input, end_input)
+        st.session_state["market_params"] = (start_input, end_input, lookback)
     except Exception as e:
         st.error(f"Erreur : {e}")
+        st.stop()
 
-st.markdown("---")
+# 2) Rendu (toujours affiché si on a des données)
+daily = st.session_state.get("market_daily", pd.DataFrame())
+if daily.empty:
+    st.error("Aucune donnée sur l'intervalle demandé.")
+else:
+    # GRAND GRAPHIQUE historique jusqu'à J-1
+    st.subheader("Historique (moyenne journalière jusqu’à J−1)")
+    vis = daily.copy()
+    vis["date"] = pd.to_datetime(vis["date"])
+    chart = (
+        alt.Chart(vis)
+        .mark_line()
+        .encode(
+            x=alt.X("date:T", title="Date"),
+            y=alt.Y("avg:Q", title="€/MWh")
+        )
+        .properties(height=420, width="container")
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+    # KPIs en bas (ordre demandé)
+    last = daily.iloc[-1]
+    overall_avg = round(daily["avg"].mean(), 2)
+    last_day_dt = pd.to_datetime(daily["date"].max())
+    mask_month = (
+        (pd.to_datetime(daily["date"]).dt.year == last_day_dt.year) &
+        (pd.to_datetime(daily["date"]).dt.month == last_day_dt.month)
+    )
+    month_avg = round(daily.loc[mask_month, "avg"].mean(), 2)
+
+    st.subheader("Synthèse")
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Moyenne depuis le début visible", f"{overall_avg} €/MWh")
+    k2.metric("Moyenne mois en cours (jusqu’à J−1)", f"{month_avg} €/MWh")
+    k3.metric("Dernier prix accessible (J−1)", f"{last['avg']:.2f} €/MWh")
+
+    # Décision (ancrée sur dernier prix)
+    lookback_use = st.session_state.get("market_params", (None, None, lookback))[2]
+    rec = decision_from_last(daily, lookback_days=lookback_use)
+    st.subheader("Décision (ancrée sur le dernier prix)")
+    st.info(f"**{rec['reco']}** — {rec['raison']}  \n"
+            f"Références {lookback_use}j : P10 {rec['p10']} · P30 {rec['p30']} · P70 {rec['p70']} €/MWh")
+
+    # Comparatif spot vs CAL (si dispo depuis FlexyPower)
+    chosen_forward = st.session_state.get("flexy_cal_choice", None)
+    if chosen_forward is not None and isinstance(chosen_forward, (int, float)):
+        last_spot = float(last["avg"])
+        spread = last_spot - chosen_forward
+        st.caption(f"Comparatif spot (J−1) vs produit choisi : {last_spot:.2f} vs {chosen_forward:.2f} €/MWh → spread {spread:.2f}")
+        p30 = pd.Series(daily["avg"]).quantile(0.30)
+        p70 = pd.Series(daily["avg"]).quantile(0.70)
+        if chosen_forward <= p30 and last_spot <= chosen_forward:
+            st.success("Signal renforcé : CAL sous P30 et spot ≤ CAL → **fixer 20–40%**.")
+        elif chosen_forward >= p70 and last_spot >= chosen_forward:
+            st.warning("Signal affaibli : CAL élevé (≥ P70) et spot ≥ CAL → **attendre**.")
+
+    # Tableau + export
+    st.dataframe(daily.tail(14), use_container_width=True)
+    st.download_button(
+        "Télécharger CSV (jour par jour)",
+        data=daily.to_csv(index=False),
+        file_name=f"be_dayahead_{start_input}_to_{end_input}.csv",
+        mime="text/csv"
+    )
+
+    # Petit récap des bornes réellement utilisées (debug utile)
+    st.caption(f"Intervalle chargé : {start_input} → {end_input} (fin incluse, J−1 recommandé)")
+
 
 # ----------------------------- Contrat : formulaire & couverture
 st.subheader("Contrat client — entrées")
