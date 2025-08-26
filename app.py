@@ -315,13 +315,28 @@ _clicks_df = pd.DataFrame(st.session_state["contract_clicks"])
 fixed_mwh = float(_clicks_df["volume"].sum()) if not _clicks_df.empty else 0.0
 rest_mwh  = max(0.0, total_mwh - fixed_mwh)
 cov_pct   = round((fixed_mwh / total_mwh * 100.0), 2) if total_mwh > 0 else 0.0
+fixed_mwh = float(_clicks_df["volume"].sum()) if not _clicks_df.empty else 0.0
+rest_mwh  = max(0.0, total_mwh - fixed_mwh)
+cov_pct   = round((fixed_mwh / total_mwh * 100.0), 2) if total_mwh > 0 else 0.0
 
-c1, c2, c3, c4 = st.columns(4)
+# ➜ prix moyen simple (non pondéré)
+avg_simple = round(float(_clicks_df["price"].mean()), 2) if not _clicks_df.empty else None
+# (optionnel) prix moyen pondéré – utile à afficher en mini-legende
+avg_pond = round(
+    (_clicks_df["price"] * _clicks_df["volume"]).sum() / fixed_mwh, 2
+) if fixed_mwh > 0 else None
+
+c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Volume total", f"{total_mwh:.0f} MWh")
 c2.metric("Total déjà fixé", f"{fixed_mwh:.0f} MWh")
 c3.metric("Total restant", f"{rest_mwh:.0f} MWh")
 c4.metric("Couverture", f"{cov_pct:.1f} %")
+c5.metric("Prix d’achat moyen", f"{avg_simple:.2f} €/MWh" if avg_simple is not None else "—")
 st.progress(min(cov_pct/100.0, 1.0))
+
+if avg_pond is not None:
+    st.caption(f"(Référence) Prix moyen **pondéré** : **{avg_pond:.2f} €/MWh**")
+
 
 # ---------- 2) Entrées client — ajouter un clic
 st.subheader("Contrat client — entrées / clics")
@@ -367,6 +382,9 @@ else:
         "volume": "Volume (MWh)",
         "pct_total": "% du total"
     })[["Date", "Prix (€/MWh)", "Volume (MWh)", "% du total"]]
+    display_df = display_df.copy()
+    display_df.index = display_df.index + 1
+    display_df.index.name = "Clic #"
 
     st.markdown("### Clics enregistrés")
     st.dataframe(display_df, use_container_width=True)
@@ -376,7 +394,7 @@ else:
     with col_del1:
         del_idx = st.selectbox(
             "Supprimer un clic",
-            options=list(range(len(display_df))),
+            options=list(range(1, len(display_df)+1)),
             format_func=lambda i: f"{i+1} — {display_df.iloc[i]['Date']} | {display_df.iloc[i]['Volume (MWh)']} MWh @ {display_df.iloc[i]['Prix (€/MWh)']} €/MWh"
         )
     with col_del2:
