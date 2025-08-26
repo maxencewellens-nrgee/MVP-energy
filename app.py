@@ -9,7 +9,7 @@ from dateutil.relativedelta import relativedelta
 import pytz
 import html as ihtml
 import unicodedata
-
+import urllib.parse 
 
 # ----------------------------- Config
 st.set_page_config(page_title="MVP Énergie — BE Day-Ahead", layout="wide")
