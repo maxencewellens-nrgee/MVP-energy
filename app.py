@@ -13,73 +13,7 @@ import urllib.parse
 
 # ----------------------------- Config
 st.set_page_config(page_title="MVP Énergie — BE Day-Ahead", layout="wide")
-# --- Responsive / Desktop polish ---
-st.markdown("""
-<style>
-/* élargit le conteneur central sur desktop */
-.block-container {max-width: 1200px; padding-top: 0.5rem;}
-
-/* sidebar un peu plus large sur PC */
-@media (min-width: 992px) {
-  [data-testid="stSidebar"] {min-width: 320px; max-width: 340px;}
-}
-
-/* réduit l’espace au-dessus des titres */
-h1, h2, h3 { margin-top: 0.4rem; }
-
-/* harmonise les métriques */
-[data-testid="stMetricValue"] { font-size: 1.4rem; }
-[data-testid="stMetricLabel"] { opacity: 0.8; }
-
-/* petit boost de netteté du graphe */
-.vega-embed canvas { image-rendering: -webkit-optimize-contrast; }
-</style>
-""", unsafe_allow_html=True)
-
-# ----------------------------- Historique prix marché électricité (SÛR)
-st.subheader("Historique prix marché électricité")
-
-# Récupère les données chargées (remplies plus haut lors du load auto)
-_daily = st.session_state.get("market_daily", pd.DataFrame())
-if _daily.empty:
-    st.error("Aucune donnée marché chargée (daily vide).")
-else:
-    # Choix de la fenêtre de moyenne mobile
-    mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
-
-    # Prépare le DataFrame pour Altair
-    vis = _daily.copy()
-    vis["date"] = pd.to_datetime(vis["date"])
-    vis = vis.sort_values("date")
-    vis["sma"] = vis["avg"].rolling(
-        window=int(mm_window),
-        min_periods=max(5, int(mm_window)//3)
-    ).mean()
-
-    # Centrage du graphe sur desktop
-    left, center, right = st.columns([0.05, 0.90, 0.05])
-    with center:
-        price_line = (
-            alt.Chart(vis)
-            .mark_line()
-            .encode(
-                x=alt.X("date:T", title="Date"),
-                y=alt.Y("avg:Q", title="€/MWh"),
-                tooltip=[
-                    alt.Tooltip("date:T", title="Date"),
-                    alt.Tooltip("avg:Q", title="BE spot (€/MWh)", format=".2f"),
-                    alt.Tooltip("sma:Q", title=f"SMA {mm_window}j", format=".2f"),
-                ],
-            )
-        )
-        sma_line = (
-            alt.Chart(vis.dropna(subset=["sma"]))
-            .mark_line(strokeWidth=3)
-            .encode(x="date:T", y="sma:Q")
-        )
-        chart = (price_line + sma_line).properties(height=420, width="container")
-        st.altair_chart(chart, use_container_width=True)
-
+st.title("Gestion contrat futur, Recommandation & Prise de décision")
 
 # ----------------------------- Secrets / Token
 TOKEN = st.secrets.get("ENTSOE_TOKEN", "")
@@ -312,13 +246,16 @@ chart = (price_line + sma_line).properties(height=420, width="container")
 st.altair_chart(chart, use_container_width=True)
 
 
-# ----------------------------- Synthèse (rangée)
+# ----------------------------- Synthèse (unique)
 st.subheader("Synthèse")
+
 _daily = st.session_state.get("market_daily", pd.DataFrame())
 if _daily.empty:
     st.error("Aucune donnée marché chargée (daily vide).")
 else:
     daily_syn = _daily.copy()
+
+    # KPI spot
     overall_avg = round(daily_syn["avg"].mean(), 2)
     last = daily_syn.iloc[-1]
     last_day_dt = pd.to_datetime(daily_syn["date"].max())
@@ -328,14 +265,10 @@ else:
     )
     month_avg = round(daily_syn.loc[mask_month, "avg"].mean(), 2)
 
-    # ligne centrée sur desktop
-    l, c, r = st.columns([0.05, 0.90, 0.05])
-    with c:
-        k1, k2, k3 = st.columns([1,1,1])
-        k1.metric("Moyenne depuis le début visible", f"{overall_avg} €/MWh")
-        k2.metric("Moyenne mois en cours (J−1)", f"{month_avg} €/MWh")
-        k3.metric("Dernier prix accessible (J−1)", f"{last['avg']:.2f} €/MWh")
-
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Moyenne depuis le début visible", f"{overall_avg} €/MWh")
+    k2.metric("Moyenne mois en cours (jusqu’à J−1)", f"{month_avg} €/MWh")
+    k3.metric("Dernier prix accessible (J−1)", f"{last['avg']:.2f} €/MWh")
 
     # CAL FlexyPower (utilise ta fonction fetch_flexypower_cals() définie plus haut)
     try:
@@ -352,48 +285,42 @@ else:
         st.warning(f"CAL FlexyPower indisponible : {e}")
 
     
-# ===================== CONTRAT — FORMULAIRE DANS LA SIDEBAR =====================
-with st.sidebar.form("form_contrat"):
-    st.subheader("Contrat client — entrées")
-    col1, col2 = st.columns(2)
+# ----------------------------- Contrat : formulaire & couverture
+st.subheader("Contrat client — entrées")
+with st.form("form_contrat"):
+    col1, col2, col3 = st.columns(3)
     with col1:
-        date_debut_contrat = st.date_input("Début", value=date(datetime.now().year, 1, 1))
-        volume_total_mwh   = st.number_input("Volume total (MWh)", min_value=0.0, value=200.0, step=10.0)
-        prix_fixe_moyen    = st.number_input("Prix fixe moyen (€/MWh)", min_value=0.0, value=85.0, step=1.0)
+        date_debut_contrat = st.date_input("Date début contrat", value=date(datetime.now().year, 1, 1))
     with col2:
-        duree_contrat_mois = st.radio("Durée", options=[12, 24, 36], index=2, format_func=lambda m: f"{m//12} an(s)")
-        volume_deja_fixe_mwh = st.number_input("Déjà fixé (MWh)", min_value=0.0, value=120.0, step=10.0)
+        duree_contrat_mois = st.radio("Durée du contrat", options=[12, 24, 36], index=2, format_func=lambda m: f"{m//12} an(s)")
+    with col3:
+        volume_total_mwh = st.number_input("Volume total (MWh)", min_value=0.0, value=200.0, step=10.0)
 
-    apply_contrat = st.form_submit_button("Appliquer")
+    col4, col5 = st.columns(2)
+    with col4:
+        volume_deja_fixe_mwh = st.number_input("Volume déjà fixé (MWh)", min_value=0.0, value=120.0, step=10.0)
+    with col5:
+        prix_fixe_moyen = st.number_input("Prix fixe moyen (€/MWh)", min_value=0.0, value=85.0, step=1.0)
 
-# Calcul + persistance dans la session (pour affichage au centre)
-if apply_contrat:
+    submit_contrat = st.form_submit_button("Mettre à jour le contrat")
+
+if submit_contrat:
+    # Fin = début + durée - 1 jour
     date_fin_contrat = (date_debut_contrat + relativedelta(months=duree_contrat_mois)) - timedelta(days=1)
+
+    # Couverture %
     couverture_pct = 0.0 if volume_total_mwh == 0 else min(100.0, round(100 * volume_deja_fixe_mwh / volume_total_mwh, 2))
     reste_mwh = max(0.0, volume_total_mwh - volume_deja_fixe_mwh)
 
-    st.session_state["contrat"] = {
-        "debut": date_debut_contrat,
-        "fin": date_fin_contrat,
-        "vtot": volume_total_mwh,
-        "vfix": volume_deja_fixe_mwh,
-        "prixfixe": prix_fixe_moyen,
-        "pct": couverture_pct,
-        "reste": reste_mwh,
-    }
+    st.success(f"Début : **{fmt_be(date_debut_contrat)}**  ·  Fin : **{fmt_be(date_fin_contrat)}**")
 
-# ===================== CONTRAT — AFFICHAGE AU CENTRE =====================
-if "contrat" in st.session_state:
-    c = st.session_state["contrat"]
+    # "Couverture du contrat en cours" (titre + chiffres)
     st.subheader("Couverture du contrat en cours")
-    st.success(f"Début : **{fmt_be(c['debut'])}**  ·  Fin : **{fmt_be(c['fin'])}**")
-
     cA, cB, cC = st.columns(3)
-    cA.metric("Couverture", f"{c['pct']:.1f} %")
-    cB.metric("Fixé", f"{c['vfix']:.0f} MWh")
-    cC.metric("À fixer", f"{c['reste']:.0f} MWh")
+    cA.metric("Couverture", f"{couverture_pct:.1f} %")
+    cB.metric("Fixé", f"{volume_deja_fixe_mwh:.0f} MWh")
+    cC.metric("À fixer", f"{reste_mwh:.0f} MWh")
 
-    st.caption(
-        f"Prix fixe moyen **{c['prixfixe']:.2f} €/MWh** — compare à la section Synthèse/Recommandation."
-    )
-
+    # (Optionnel) rappel prix marché vs prix fixe moyen
+    st.caption(f"Référence : Prix fixe moyen **{prix_fixe_moyen:.2f} €/MWh**."
+               " Pour une décision, croisez avec la section 'Décision (ancrée sur le dernier prix)'.")
