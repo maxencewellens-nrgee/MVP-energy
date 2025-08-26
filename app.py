@@ -83,38 +83,37 @@ def decision_from_last(daily: pd.DataFrame, lookback_days: int = 180) -> dict:
 @st.cache_data(ttl=60*30)
 def fetch_flexypower_cals(url: str = "https://flexypower.eu/prix-de-lenergie/") -> dict:
     """
-    Scrape FlexyPower pour récupérer CAL-26/27/28 (élec & gaz).
-    Retour: {'electricity': {'CAL-26':float|None, ...}, 'gas': {...}, 'electricity_date': 'JJ/MM/AAAA'|None, 'gas_date': ...}
+    Scrape FlexyPower pour récupérer CAL-26/27/28 (électricité + date).
+    Retourne: {'CAL-26': float|None, 'CAL-27': float|None, 'CAL-28': float|None, 'date': 'JJ/MM/AAAA'|None}
     """
     headers = {"User-Agent": "Mozilla/5.0 (MVP-energy; Streamlit)"}
     r = requests.get(url, headers=headers, timeout=20)
     r.raise_for_status()
     html = r.text
 
+    # Isole le bloc Electricité
     m_elec = re.search(r"Electricit[eé].*?(?=Gaz naturel|<h2|</section>|$)", html, flags=re.S|re.I)
-    m_gas  = re.search(r"Gaz naturel.*?(?=<h2|</section>|$)", html, flags=re.S|re.I)
+    vals = {"CAL-26": None, "CAL-27": None, "CAL-28": None, "date": None}
+    if not m_elec:
+        return vals
 
-    def parse_block(block_html: str):
-        out = {}
-        for yy in ("26","27","28"):
-            m = re.search(rf"CAL[\s\-]*{yy}\s*([0-9]+[.,][0-9]+)", block_html, flags=re.I)
-            out[f"CAL-{yy}"] = float(m.group(1).replace(",", ".")) if m else None
-        dm = re.search(r"(\d{2}/\d{2}/\d{4})", block_html)  # JJ/MM/AAAA
-        date_str = dm.group(1) if dm else None
-        return out, date_str
+    block = m_elec.group(0)
+    # Date JJ/MM/AAAA
+    dm = re.search(r"(\d{2}/\d{2}/\d{4})", block)
+    vals["date"] = dm.group(1) if dm else None
 
-    elec_vals, elec_date = ({}, None)
-    gas_vals,  gas_date  = ({}, None)
-    if m_elec: elec_vals, elec_date = parse_block(m_elec.group(0))
-    if m_gas:  gas_vals,  gas_date  = parse_block(m_gas.group(0))
+    # Valeurs CAL-26/27/28 (tolérant "CAL 26" / "CAL-26")
+    for yy in ("26","27","28"):
+        m = re.search(rf"CAL[\s\-]*{yy}\s*([0-9]+[.,][0-9]+)", block, flags=re.I)
+        if m:
+            vals[f"CAL-{yy}"] = float(m.group(1).replace(",", "."))
+    return vals
 
-    return {"electricity": elec_vals, "gas": gas_vals,
-            "electricity_date": elec_date, "gas_date": gas_date}
 
 # ----------------------------- Marché : bornes automatiques (sans UI)
 today_be = datetime.now(tz_be).date()
 END_INCLUSIVE = str(today_be - timedelta(days=1))   # J-1
-START_HISTORY = "2020-01-01"                        # élargis si tu veux plus long
+START_HISTORY = "2023-01-01"                        # élargis si tu veux plus long
 LOOKBACK_DAYS = 180                                 # pour les quantiles (non visible côté client)
 
 # Variables utilisées plus bas (pas d’UI publique)
@@ -160,21 +159,25 @@ else:
     )
     st.altair_chart(chart, use_container_width=True)
 
-    # KPIs en bas (ordre demandé)
-    last = daily.iloc[-1]
-    overall_avg = round(daily["avg"].mean(), 2)
-    last_day_dt = pd.to_datetime(daily["date"].max())
-    mask_month = (
-        (pd.to_datetime(daily["date"]).dt.year == last_day_dt.year) &
-        (pd.to_datetime(daily["date"]).dt.month == last_day_dt.month)
-    )
-    month_avg = round(daily.loc[mask_month, "avg"].mean(), 2)
+  # ----------------------------- Synthèse (REMPLACEMENT ENTIER)
+st.subheader("Synthèse")
 
-    st.subheader("Synthèse")
-    k1, k2, k3 = st.columns(3)
-    k1.metric("Moyenne depuis le début visible", f"{overall_avg} €/MWh")
-    k2.metric("Moyenne mois en cours (jusqu’à J−1)", f"{month_avg} €/MWh")
-    k3.metric("Dernier prix accessible (J−1)", f"{last['avg']:.2f} €/MWh")
+# Ligne 1 : KPI spot (inchangé)
+k1, k2, k3 = st.columns(3)
+k1.metric("Moyenne depuis le début visible", f"{overall_avg} €/MWh")
+k2.metric("Moyenne mois en cours (jusqu’à J−1)", f"{month_avg} €/MWh")
+k3.metric("Dernier prix accessible (J−1)", f"{last['avg']:.2f} €/MWh")
+
+# Ligne 2 : Forwards CAL (FlexyPower)
+try:
+    cal = fetch_flexypower_cals()
+    cal_date = cal.get("date") or "—"
+    f1, f2, f3 = st.columns(3)
+    f1.metric(f"CAL-26 (élec) – {cal_date}", f"{cal.get('CAL-26'):.2f} €/MWh" if cal.get('CAL-26') is not None else "—")
+    f2.metric(f"CAL-27 (élec) – {cal_date}", f"{cal.get('CAL-27'):.2f} €/MWh" if cal.get('CAL-27') is not None else "—")
+    f3.metric(f"CAL-28 (élec) – {cal_date}", f"{cal.get('CAL-28'):.2f} €/MWh" if cal.get('CAL-28') is not None else "—")
+except Exception as e:
+    st.warning(f"CAL FlexyPower indisponible : {e}")
 
     # Décision (ancrée sur le dernier prix, garde-fous quantiles)
     _, _, lookback_use = st.session_state.get("market_params", (start_input, end_input, lookback))
