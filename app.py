@@ -410,6 +410,7 @@ else:
     with col_del2:
         if st.button("🗑️ Supprimer la ligne sélectionnée"):
             st.session_state["contract_clicks"].pop(int(del_idx))
+            st.("Clic supprimé avec succès")
             st.rerun()
 
     # export CSV
