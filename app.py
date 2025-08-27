@@ -287,14 +287,9 @@ else:
     # ===================== CONTRATS MULTI-MODULES (REMPLACEMENT ENTIER) =====================
 
 def render_contract_module(title: str, ns: str, default_total: float = 200.0, default_max_clicks: int = 5):
-    # === Tout le module dans un container avec bordure ===
-    with st.container(border=True):
-        st.subheader(title)
+    st.markdown("---")
+    st.subheader(title)
 
-        # Exemple de contenu indenté (tout ton code existant doit être ici)
-        st.write("Ici ton bloc couverture / clics / historique / CSV")
-
-        
     # --- clés (toutes uniques par ns)
     total_key  = f"{ns}__total_mwh"
     clicks_key = f"{ns}__clicks"
