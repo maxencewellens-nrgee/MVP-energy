@@ -286,8 +286,8 @@ else:
 
     # ===================== CONTRATS MULTI-MODULES (REMPLACEMENT ENTIER) =====================
 
-def render_contract_module(title: str, ns: str, default_total: float = 200.0, default_max_clicks: int = 5):
-    # Boîte avec bordure pour délimiter visuellement toute la section
+    def render_contract_module(title: str, ns: str, default_total: float = 200.0, default_max_clicks: int = 5):
+    # === Tout le module est dans un container avec bordure ===
     with st.container(border=True):
         st.subheader(title)
 
