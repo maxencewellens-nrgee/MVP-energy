@@ -222,9 +222,9 @@ vis["sma"] = vis["avg"].rolling(
     min_periods=max(5, int(mm_window)//3)
 ).mean()
 
-# Champs formatés pour affichage
-vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")  # ex : 20/01/25
-vis["spot_str"] = vis["avg"].apply(lambda v: f"{v:.2f}".replace(".", ",") + "€")  # ex : 209,65€
+# Champs formatés FR pour affichage
+vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")                      # ex : 21/05/25
+vis["spot_str"] = vis["avg"].apply(lambda v: f"{v:.2f}".replace(".", ",") + "€")  # ex : 99,75€
 
 # --- Sélection souris : suit le mouvement, ne se vide jamais
 hover = alt.selection_point(
@@ -259,7 +259,13 @@ points = base.mark_point(opacity=0).encode(
     tooltip=[]
 ).add_params(hover)
 
-# Règle verticale — on REMET le tooltip (le cadran)
+# Point visible au survol
+hover_point = base.mark_circle(size=60, color="#1f2937").encode(
+    y="avg:Q",
+    tooltip=[]
+).transform_filter(hover)
+
+# Règle verticale — réactive le "cadran" (tooltip)
 v_rule = base.mark_rule(color="#9ca3af").encode(
     tooltip=[
         alt.Tooltip("date_str:N", title="Date"),
@@ -267,7 +273,7 @@ v_rule = base.mark_rule(color="#9ca3af").encode(
     ]
 ).transform_filter(hover)
 
-# Labels persistants — on les décale davantage et on aligne à gauche
+# Labels persistants (avec halo blanc + décalage pour ne pas coller à la boule)
 label_price_halo = base.mark_text(
     dx=14, dy=-16, align="left", fontSize=12, fontWeight="bold",
     stroke="white", strokeWidth=5, opacity=1
@@ -308,7 +314,6 @@ chart = alt.layer(
 ).interactive()
 
 st.altair_chart(chart, use_container_width=True)
-
 
 # ----------------------------- Synthèse (unique)
 st.subheader("Synthèse Prix Spot et Forward")
