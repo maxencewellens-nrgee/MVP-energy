@@ -335,7 +335,7 @@ c1.metric("Volume total", f"{total_mwh:.0f} MWh")
 c2.metric("Total déjà fixé", f"{fixed_mwh:.0f} MWh")
 c3.metric("Total restant", f"{rest_mwh:.0f} MWh")
 c4.metric("Couverture", f"{cov_pct:.1f} %")
-c5.metric("Prix d’achat moyen", f"{avg_simple:.2f} €/MWh" if avg_simple is not None else "—")
+c5.metric("Prix d’achat moyen", f"{avg_simple:.0f} €/MWh" if avg_simple is not None else "—")
 st.progress(min(cov_pct/100.0, 1.0))
 
 if avg_pond is not None:
@@ -349,7 +349,7 @@ col1, col2, col3, col4 = st.columns([1, 1, 1, 0.8])
 with col1:
     new_date = st.date_input("Date du clic", value=date.today(), key="new_click_date")
 with col2:
-    new_price = st.number_input("Prix (€/MWh)", min_value=0.0,step=5.0, format="%.2f", key="new_click_price")
+    new_price = st.number_input("Prix (€/MWh)", min_value=0.0,step=5.0, format="%.0f", key="new_click_price")
 with col3:
     new_vol = st.number_input(
     "Volume (MWh)",
