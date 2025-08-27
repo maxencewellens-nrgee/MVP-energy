@@ -207,8 +207,7 @@ else:
     # Titre demandé
     st.subheader("Historique prix marché électricité")
 
-
-# ===================== Graphique interactif BE spot (axe X = mois FR) =====================
+# ===================== Graphique interactif (tooltips FR: Date + Price) =====================
 st.subheader("Moyenne 30-60-90 jours")
 
 mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
@@ -224,53 +223,51 @@ vis["sma"] = vis["avg"].rolling(
 # Sélection hover
 hover = alt.selection_point(fields=["date"], nearest=True, on="mouseover", empty="none")
 
-# Axe X: mois abrégés FR + tick mensuel
+# Axe X = mois abrégés FR
 x_axis = alt.Axis(
     title="Date",
-    format="%b",               # base = abréviation du mois
+    format="%b",
     labelAngle=0,
     tickCount="month",
-    # Traduction FR des labels de mois
     labelExpr="['jan','févr','mars','avr','mai','juin','juil','août','sept','oct','nov','déc'][month(datum.value)]"
 )
 
-base = alt.Chart(vis).encode(x=alt.X("date:T", axis=x_axis))
+# Base + champ calculé pour tooltip "Date" (mois FR)
+base = alt.Chart(vis).transform_calculate(
+    mois_fr="['jan','févr','mars','avr','mai','juin','juil','août','sept','oct','nov','déc'][month(datum.date)]"
+).encode(x=alt.X("date:T", axis=x_axis))
 
-# Courbe spot
+# Courbe spot (NOUS NE MONTRONS QUE CELLE-CI DANS LE TOOLTIP)
 spot_line = base.mark_line(strokeWidth=1.5, color="#1f2937").encode(
     y=alt.Y("avg:Q", title="€/MWh"),
     tooltip=[
-        alt.Tooltip("date:T", title="Date"),
-        alt.Tooltip("avg:Q",  title="BE spot (€/MWh)", format=".2f"),
-        alt.Tooltip("sma:Q",  title=f"SMA {mm_window} j (€/MWh)", format=".2f")
+        alt.Tooltip("mois_fr:N", title="Date"),
+        alt.Tooltip("avg:Q", title="Price (€/MWh)", format=".2f")
     ]
 )
 
-# Courbe moyenne mobile
+# Courbe SMA (pas de tooltip)
 sma_line = base.transform_filter("datum.sma != null") \
     .mark_line(strokeWidth=3, color="#22c55e").encode(y="sma:Q")
 
-# Points hover + point visible + règle verticale
+# Hover helpers
 points      = base.mark_point(opacity=0).encode(y="avg:Q").add_params(hover)
 hover_point = base.mark_circle(size=60, color="#1f2937").encode(y="avg:Q").transform_filter(hover)
-v_rule      = base.mark_rule(color="#9ca3af").encode().transform_filter(hover)
+v_rule      = base.mark_rule(color="#9ca3af").transform_filter(hover)
 
-# Repère de changement d'année (1er janvier) : ligne + label année
+# Repère changement d'année
 year_rule = alt.Chart(vis).transform_filter("month(datum.date)==0 && date(datum.date)==1") \
     .mark_rule(color="#e5e7eb").encode(x="date:T")
-
 year_label = alt.Chart(vis).transform_filter("month(datum.date)==0 && date(datum.date)==1") \
-    .mark_text(dy=18, color="#6b7280").encode(
-        x="date:T",
-        text=alt.Text("year(date):O")
-    )
+    .mark_text(dy=18, color="#6b7280").encode(x="date:T", text=alt.Text("year(date):O"))
 
 chart = alt.layer(spot_line, sma_line, points, v_rule, hover_point, year_rule, year_label) \
     .properties(height=420, width="container") \
     .interactive()
 
 st.altair_chart(chart, use_container_width=True)
-# =======================================================================
+# =============================================================================
+
 
 
 # ----------------------------- Synthèse (unique)
