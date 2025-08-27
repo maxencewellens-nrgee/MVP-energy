@@ -259,31 +259,53 @@ points = base.mark_point(opacity=0).encode(
     tooltip=[]
 ).add_params(hover)
 
-# Point visible et règle verticale
-hover_point = base.mark_circle(size=60, color="#1f2937").encode(
-    y="avg:Q",
-    tooltip=[]
-).transform_filter(hover)
-
+# Règle verticale — on REMET le tooltip (le cadran)
 v_rule = base.mark_rule(color="#9ca3af").encode(
-    tooltip=[]
+    tooltip=[
+        alt.Tooltip("date_str:N", title="Date"),
+        alt.Tooltip("spot_str:N", title="Spot")
+    ]
 ).transform_filter(hover)
 
-# Labels persistants (halo blanc + texte au-dessus du point)
+# Labels persistants — on les décale davantage et on aligne à gauche
 label_price_halo = base.mark_text(
-    dx=8, dy=-8, fontSize=12, fontWeight="bold",
-    stroke="white", strokeWidth=4, opacity=1
+    dx=14, dy=-16, align="left", fontSize=12, fontWeight="bold",
+    stroke="white", strokeWidth=5, opacity=1
 ).encode(
     y="avg:Q",
     text="spot_str:N"
 ).transform_filter(hover)
 
 label_price = base.mark_text(
-    dx=8, dy=-8, fontSize=12, fontWeight="bold", color="#111827", opacity=1
+    dx=14, dy=-16, align="left", fontSize=12, fontWeight="bold",
+    color="#111827", opacity=1
 ).encode(
     y="avg:Q",
     text="spot_str:N"
 ).transform_filter(hover)
+
+label_date_halo = base.mark_text(
+    dx=14, dy=4, align="left", fontSize=11,
+    stroke="white", strokeWidth=5, opacity=1
+).encode(
+    y="avg:Q",
+    text="date_str:N"
+).transform_filter(hover)
+
+label_date = base.mark_text(
+    dx=14, dy=4, align="left", fontSize=11, color="#374151", opacity=1
+).encode(
+    y="avg:Q",
+    text="date_str:N"
+).transform_filter(hover)
+
+chart = alt.layer(
+    spot_line, sma_line, points, v_rule, hover_point,
+    label_price_halo, label_price,
+    label_date_halo, label_date
+).properties(
+    height=420, width="container"
+).interactive()
 
 # Label date sous le point (optionnel)
 label_date_halo = base.mark_text(
@@ -310,8 +332,6 @@ chart = alt.layer(
 ).interactive()
 
 st.altair_chart(chart, use_container_width=True)
-
-
 
 
 # ----------------------------- Synthèse (unique)
