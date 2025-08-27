@@ -208,7 +208,7 @@ else:
     st.subheader("Historique prix marché électricité")
 
 
-# ===================== Graphique interactif BE spot =====================
+# ===================== Graphique interactif BE spot (axe X = mois FR) =====================
 st.subheader("Moyenne 30-60-90 jours")
 
 mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
@@ -221,57 +221,56 @@ vis["sma"] = vis["avg"].rolling(
     min_periods=max(5, int(mm_window)//3)
 ).mean()
 
-# Sélection 'hover' (survol souris) au plus proche
-hover = alt.selection_point(
-    fields=["date"],
-    nearest=True,
-    on="mouseover",
-    empty="none",
+# Sélection hover
+hover = alt.selection_point(fields=["date"], nearest=True, on="mouseover", empty="none")
+
+# Axe X: mois abrégés FR + tick mensuel
+x_axis = alt.Axis(
+    title="Date",
+    format="%b",               # base = abréviation du mois
+    labelAngle=0,
+    tickCount="month",
+    # Traduction FR des labels de mois
+    labelExpr="['jan','févr','mars','avr','mai','juin','juil','août','sept','oct','nov','déc'][month(datum.value)]"
 )
 
-base = alt.Chart(vis).encode(
-    x=alt.X("date:T", title="Date"),
-)
+base = alt.Chart(vis).encode(x=alt.X("date:T", axis=x_axis))
 
-# Courbe des prix spot
+# Courbe spot
 spot_line = base.mark_line(strokeWidth=1.5, color="#1f2937").encode(
     y=alt.Y("avg:Q", title="€/MWh"),
     tooltip=[
         alt.Tooltip("date:T", title="Date"),
-        alt.Tooltip("avg:Q", title="BE spot (€/MWh)", format=".2f"),
-        alt.Tooltip("sma:Q", title=f"SMA {mm_window} j (€/MWh)", format=".2f")
+        alt.Tooltip("avg:Q",  title="BE spot (€/MWh)", format=".2f"),
+        alt.Tooltip("sma:Q",  title=f"SMA {mm_window} j (€/MWh)", format=".2f")
     ]
 )
 
 # Courbe moyenne mobile
-sma_line = base.transform_filter("datum.sma != null").mark_line(
-    strokeWidth=3, color="#22c55e"
-).encode(
-    y="sma:Q"
-)
+sma_line = base.transform_filter("datum.sma != null") \
+    .mark_line(strokeWidth=3, color="#22c55e").encode(y="sma:Q")
 
-# Points invisibles pour accrocher le hover
-points = base.mark_point(opacity=0).encode(
-    y="avg:Q"
-).add_params(hover)
+# Points hover + point visible + règle verticale
+points      = base.mark_point(opacity=0).encode(y="avg:Q").add_params(hover)
+hover_point = base.mark_circle(size=60, color="#1f2937").encode(y="avg:Q").transform_filter(hover)
+v_rule      = base.mark_rule(color="#9ca3af").encode().transform_filter(hover)
 
-# Point visible au survol
-hover_point = base.mark_circle(size=60, color="#1f2937").encode(
-    y="avg:Q"
-).transform_filter(hover)
+# Repère de changement d'année (1er janvier) : ligne + label année
+year_rule = alt.Chart(vis).transform_filter("month(datum.date)==0 && date(datum.date)==1") \
+    .mark_rule(color="#e5e7eb").encode(x="date:T")
 
-# Règle verticale au survol
-v_rule = base.mark_rule(color="#9ca3af").encode().transform_filter(hover)
+year_label = alt.Chart(vis).transform_filter("month(datum.date)==0 && date(datum.date)==1") \
+    .mark_text(dy=18, color="#6b7280").encode(
+        x="date:T",
+        text=alt.Text("year(date):O")
+    )
 
-chart = alt.layer(
-    spot_line, sma_line, points, v_rule, hover_point
-).properties(
-    height=420, width="container"
-).interactive()  # zoom/pan si tu veux
+chart = alt.layer(spot_line, sma_line, points, v_rule, hover_point, year_rule, year_label) \
+    .properties(height=420, width="container") \
+    .interactive()
 
 st.altair_chart(chart, use_container_width=True)
 # =======================================================================
-
 
 
 # ----------------------------- Synthèse (unique)
@@ -314,7 +313,7 @@ else:
 
 # ===================== CONTRATS MULTI-MODULES (REMPLACEMENT ENTIER) =====================
 
-def render_contract_module(title: str, ns: str, default_total: float = 200.0, default_max_clicks: int = 5):
+def render_contract_module(title: str, ns: str, default_total: float = 0.0, default_max_clicks: int = 5):
     # === 1 GROS CADRE qui englobe TOUT le module ===
     with st.container(border=True):
         st.subheader(title)
