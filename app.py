@@ -295,6 +295,7 @@ def render_contract_module(title: str, ns: str, default_total: float = 200.0, de
         total_key  = f"{ns}__total_mwh"
         clicks_key = f"{ns}__clicks"
         max_key    = f"{ns}__max_clicks"
+        init_key    = f"{ns}__initialized"
 
         date_key   = f"{ns}__new_click_date"
         price_key  = f"{ns}__new_click_price"
@@ -305,10 +306,11 @@ def render_contract_module(title: str, ns: str, default_total: float = 200.0, de
         del_btn    = f"{ns}__btn_delete_click"
         dl_btn     = f"{ns}__dl_csv"
 
-        # --- état initial
-        st.session_state.setdefault(total_key, float(default_total))
-        st.session_state.setdefault(clicks_key, [])
-        st.session_state.setdefault(max_key, int(default_max_clicks))
+        if init_key not in st.session_state:
+    st.session_state[total_key]  = float(default_total)
+    st.session_state[clicks_key] = []
+    st.session_state[max_key]    = int(default_max_clicks)
+    st.session_state[init_key]   = True
 
         # ---------- Couverture
         total_mwh = st.number_input("Volume total (MWh)", min_value=0.0, step=5.0, format="%.0f", key=total_key)
@@ -335,7 +337,7 @@ def render_contract_module(title: str, ns: str, default_total: float = 200.0, de
 
         # ---------- Paramètre : nombre de clics autorisés
         st.markdown("### Paramètre : nombre de clics autorisés")
-        max_clicks = st.number_input("Nombre maximum de clics autorisés", min_value=1, max_value=20, step=1, key=max_key)
+        max_clicks = st.number_input("Nombre maximum de clics autorisés", min_value=1, max_value=20, step=1, format="%d", key=max_key, # << clé unique par ns (y2026/y2027/y2028))
         used_clicks = len(clicks)
         left_clicks = max(0, int(max_clicks) - used_clicks)
         cx1, cx2, cx3 = st.columns(3)
