@@ -393,7 +393,7 @@ else:
         "pct_total": "% du total"
     })[["Date", "Prix (€/MWh)", "Volume (MWh)", "% du total"]]
     display_df = display_df.copy()
-    display_df.index = display_df.index + 1
+    display_df.index = range(1, len(display_df)+1)
     display_df.index.name = "Clic #"
 
     st.markdown("### Clics enregistrés")
