@@ -364,7 +364,7 @@ def render_contract_module(title: str, ns: str, default_total: float = 200.0, de
             new_date = st.date_input("Date du clic", value=date.today(), key=date_key)
         with col2:
             # NOTE: format = '%.2f' (décimales) demandé explicitement
-            new_price = st.number_input("Prix (€/MWh)", min_value=0.0, step=5.0, format="%.2f", key=price_key)
+            new_price = st.number_input("Prix (€/MWh)", min_value=0.0, step=5.0, format="%.0f", key=price_key)
         with col3:
             new_vol = st.number_input("Volume (MWh)", min_value=0.0, step=5.0, format="%.0f", key=vol_key)
         with col4:
