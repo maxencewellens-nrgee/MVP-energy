@@ -301,14 +301,18 @@ st.session_state.setdefault("contract_clicks", [])  # liste de dicts: {'date', '
 # ---------- 1) Couverture du contrat en cours (toujours en premier)
 st.subheader("Couverture du contrat en cours")
 
-# total modifiable ici
+# Initialise une seule fois la valeur par défaut
+if "contract_total_mwh" not in st.session_state:
+    st.session_state["contract_total_mwh"] = 200.0
+
+# Le widget gère directement la clé ; pas de value= ni de sync manuel
 total_mwh = st.number_input(
-    "Volume total (MWh)", min_value=0.0,
-    value=float(st.session_state["contract_total_mwh"]),
-    step=10.0, key="total_input_mwh"
+    "Volume total (MWh)",
+    min_value=0.0,
+    step=5.0,            # ← le bouton “+” ajoute 5
+    format="%.0f",
+    key="contract_total_mwh",
 )
-if total_mwh != st.session_state["contract_total_mwh"]:
-    st.session_state["contract_total_mwh"] = total_mwh
 
 # totaux à partir des clics existants
 _clicks_df = pd.DataFrame(st.session_state["contract_clicks"])
@@ -345,9 +349,21 @@ col1, col2, col3, col4 = st.columns([1, 1, 1, 0.8])
 with col1:
     new_date = st.date_input("Date du clic", value=date.today(), key="new_click_date")
 with col2:
-    new_price = st.number_input("Prix (€/MWh)", min_value=0.0, step=0.1, value=0.0, key="new_click_price")
+    new_price = st.number_input(
+    "Prix (€/MWh)",
+    min_value=0.0,
+    step=5.0,           # ← “+” ajoute 5
+    format="%.2f",
+    key="new_click_price",
+)
 with col3:
-    new_vol = st.number_input("Volume (MWh)", min_value=0.0, step=1.0, value=0.0, key="new_click_volume")
+new_vol = st.number_input(
+    "Volume (MWh)",
+    min_value=0.0,
+    step=5.0,          # ← “+” ajoute 5
+    format="%.0f",
+    key="new_click_volume",
+)
 with col4:
     st.markdown("&nbsp;")  # espace pour aligner le bouton
     add_click = st.button("➕ Ajouter ce clic", use_container_width=True)
