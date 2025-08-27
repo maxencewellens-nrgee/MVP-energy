@@ -301,101 +301,69 @@ st.session_state.setdefault("contract_clicks", [])  # liste de dicts: {'date', '
 # ---------- 1) Couverture du contrat en cours (toujours en premier)
 st.subheader("Couverture du contrat en cours")
 
-# --- Volume total (stable + virgules) ---
-st.markdown("#### Volume total (MWh)")
-with st.form("form_total_mwh", clear_on_submit=False):
-    # Valeur affichée = état actuel, formatée sans casse
-    total_str_default = f'{st.session_state["contract_total_mwh"]:.2f}'.rstrip('0').rstrip('.')
-    total_str = st.text_input(
-        "Volume total (MWh)",
-        value=st.session_state.get("total_input_mwh_str", total_str_default),
-        key="total_input_mwh_str",
-        placeholder="ex: 250,5"
-    )
-    apply_total = st.form_submit_button("Appliquer")
-
-if apply_total:
-    s = (st.session_state.get("total_input_mwh_str","") or "").strip().replace(",", ".")
-    s = re.sub(r"[^0-9.\-]", "", s)
-    try:
-        v = float(s)
-    except:
-        v = None
-    if v is None or v < 0:
-        st.warning("Merci d’entrer un **volume total** valide (≥ 0).")
-    else:
-        st.session_state["contract_total_mwh"] = float(v)
-        # on garde la chaîne propre dans le champ
-        st.session_state["total_input_mwh_str"] = str(v).rstrip('0').rstrip('.')
-        st.rerun()
-        
-total_mwh = float(st.session_state["contract_total_mwh"])
+# total modifiable ici
+total_mwh = st.number_input(
+    "Volume total (MWh)", min_value=0.0,
+    value=float(st.session_state["contract_total_mwh"]),
+    step=10.0, key="total_input_mwh"
+)
+if total_mwh != st.session_state["contract_total_mwh"]:
+    st.session_state["contract_total_mwh"] = total_mwh
 
 # totaux à partir des clics existants
 _clicks_df = pd.DataFrame(st.session_state["contract_clicks"])
 fixed_mwh = float(_clicks_df["volume"].sum()) if not _clicks_df.empty else 0.0
 rest_mwh  = max(0.0, total_mwh - fixed_mwh)
 cov_pct   = round((fixed_mwh / total_mwh * 100.0), 2) if total_mwh > 0 else 0.0
+fixed_mwh = float(_clicks_df["volume"].sum()) if not _clicks_df.empty else 0.0
+rest_mwh  = max(0.0, total_mwh - fixed_mwh)
+cov_pct   = round((fixed_mwh / total_mwh * 100.0), 2) if total_mwh > 0 else 0.0
 
-c1, c2, c3, c4 = st.columns(4)
+# ➜ prix moyen simple (non pondéré)
+avg_simple = round(float(_clicks_df["price"].mean()), 2) if not _clicks_df.empty else None
+# (optionnel) prix moyen pondéré – utile à afficher en mini-legende
+avg_pond = round(
+    (_clicks_df["price"] * _clicks_df["volume"]).sum() / fixed_mwh, 2
+) if fixed_mwh > 0 else None
+
+c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Volume total", f"{total_mwh:.0f} MWh")
 c2.metric("Total déjà fixé", f"{fixed_mwh:.0f} MWh")
 c3.metric("Total restant", f"{rest_mwh:.0f} MWh")
 c4.metric("Couverture", f"{cov_pct:.1f} %")
+c5.metric("Prix d’achat moyen", f"{avg_simple:.2f} €/MWh" if avg_simple is not None else "—")
 st.progress(min(cov_pct/100.0, 1.0))
 
-# ---------- 2) Entrées client — ajouter un clic (version stable)
+if avg_pond is not None:
+    st.caption(f"(Référence) Prix moyen **pondéré** : **{avg_pond:.2f} €/MWh**")
+
+
+# ---------- 2) Entrées client — ajouter un clic
 st.subheader("Contrat client — entrées / clics")
 
-with st.form("add_click_form", clear_on_submit=False):
-    col1, col2, col3, col4 = st.columns([1, 1, 1, 0.8])
-    with col1:
-        new_date = st.date_input("Date du clic", value=date.today(), key="new_click_date")
-    with col2:
-        price_str = st.text_input(
-            "Prix (€/MWh)",
-            value=st.session_state.get("new_click_price_str", ""),
-            key="new_click_price_str",
-            placeholder="ex: 95,2"
-        )
-    with col3:
-        vol_str = st.text_input(
-            "Volume (MWh)",
-            value=st.session_state.get("new_click_volume_str", ""),
-            key="new_click_volume_str",
-            placeholder="ex: 50"
-        )
-    with col4:
-        st.markdown("&nbsp;")
-        add_click = st.form_submit_button("➕ Ajouter ce clic", use_container_width=True)
+col1, col2, col3, col4 = st.columns([1, 1, 1, 0.8])
+with col1:
+    new_date = st.date_input("Date du clic", value=date.today(), key="new_click_date")
+with col2:
+    new_price = st.number_input("Prix (€/MWh)", min_value=0.0, step=0.1, value=0.0, key="new_click_price")
+with col3:
+    new_vol = st.number_input("Volume (MWh)", min_value=0.0, step=1.0, value=0.0, key="new_click_volume")
+with col4:
+    st.markdown("&nbsp;")  # espace pour aligner le bouton
+    add_click = st.button("➕ Ajouter ce clic", use_container_width=True)
 
 if add_click:
-    def _to_float(s):
-        if s is None: return None
-        s = s.strip().replace(",", ".")
-        s = re.sub(r"[^0-9.\-]", "", s)
-        try: return float(s)
-        except: return None
-
-    new_price = _to_float(st.session_state.get("new_click_price_str", ""))
-    new_vol   = _to_float(st.session_state.get("new_click_volume_str", ""))
-
-    if new_price is None or new_vol is None:
-        st.warning("Merci d’entrer des nombres valides pour **Prix** et **Volume**.")
-    elif new_price <= 0 or new_vol <= 0:
+    if new_vol <= 0 or new_price <= 0:
         st.warning("Prix et volume doivent être > 0.")
     else:
         st.session_state["contract_clicks"].append(
-            {"date": st.session_state.get("new_click_date", date.today()),
-             "price": float(new_price),
-             "volume": float(new_vol)}
+            {"date": new_date, "price": float(new_price), "volume": float(new_vol)}
         )
         st.success("Clic ajouté.")
-        # nettoyer les champs et relancer le rendu
-        st.session_state["new_click_price_str"] = ""
-        st.session_state["new_click_volume_str"] = ""
+        # ne PAS écrire dans des clés de widgets : on les purge puis on relance
+        for k in ("new_click_price", "new_click_volume"):  # ajoute "new_click_date" si tu veux aussi la vider
+            st.session_state.pop(k, None)
         st.rerun()
-
 
 # ---------- 3) Historique des clics
 clicks_df = pd.DataFrame(st.session_state["contract_clicks"])
@@ -414,6 +382,9 @@ else:
         "volume": "Volume (MWh)",
         "pct_total": "% du total"
     })[["Date", "Prix (€/MWh)", "Volume (MWh)", "% du total"]]
+    display_df = display_df.copy()
+    display_df.index = display_df.index + 1
+    display_df.index.name = "Clic #"
 
     st.markdown("### Clics enregistrés")
     st.dataframe(display_df, use_container_width=True)
@@ -423,7 +394,7 @@ else:
     with col_del1:
         del_idx = st.selectbox(
             "Supprimer un clic",
-            options=list(range(len(display_df))),
+            options=list(range(1, len(display_df)+1)),
             format_func=lambda i: f"{i+1} — {display_df.iloc[i]['Date']} | {display_df.iloc[i]['Volume (MWh)']} MWh @ {display_df.iloc[i]['Prix (€/MWh)']} €/MWh"
         )
     with col_del2:
