@@ -207,43 +207,71 @@ else:
     # Titre demandé
     st.subheader("Historique prix marché électricité")
 
-    # GRAND GRAPHIQUE + moyenne mobile
+
+# ===================== Graphique interactif BE spot =====================
 st.subheader("Moyenne 30-60-90 jours")
 
-# Choix fenêtre pour la moyenne mobile
 mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
 
 vis = daily.copy()
 vis["date"] = pd.to_datetime(vis["date"])
-# moyenne mobile simple (SMA). min_periods pour éviter trous au début
 vis = vis.sort_values("date")
-vis["sma"] = vis["avg"].rolling(window=int(mm_window), min_periods=max(5, int(mm_window)//3)).mean()
+vis["sma"] = vis["avg"].rolling(
+    window=int(mm_window),
+    min_periods=max(5, int(mm_window)//3)
+).mean()
 
-price_line = (
-    alt.Chart(vis)
-    .mark_line()
-    .encode(
-        x=alt.X("date:T", title="Date"),
-        y=alt.Y("avg:Q", title="€/MWh"),
-        color=alt.value("#1f2937"),  # ligne principale (optionnel)
-        tooltip=[alt.Tooltip("date:T", title="Date"),
-                 alt.Tooltip("avg:Q", title="BE spot (€/MWh)", format=".2f"),
-                 alt.Tooltip("sma:Q", title=f"SMA {mm_window}j (€/MWh)", format=".2f")]
-    )
+# Sélection 'hover' (survol souris) au plus proche
+hover = alt.selection_point(
+    fields=["date"],
+    nearest=True,
+    on="mouseover",
+    empty="none",
 )
 
-sma_line = (
-    alt.Chart(vis.dropna(subset=["sma"]))
-    .mark_line(strokeWidth=3)
-    .encode(
-        x="date:T",
-        y="sma:Q",
-        color=alt.value("#22c55e")  # vert pour la moyenne (optionnel)
-    )
+base = alt.Chart(vis).encode(
+    x=alt.X("date:T", title="Date"),
 )
 
-chart = (price_line + sma_line).properties(height=420, width="container")
+# Courbe des prix spot
+spot_line = base.mark_line(strokeWidth=1.5, color="#1f2937").encode(
+    y=alt.Y("avg:Q", title="€/MWh"),
+    tooltip=[
+        alt.Tooltip("date:T", title="Date"),
+        alt.Tooltip("avg:Q", title="BE spot (€/MWh)", format=".2f"),
+        alt.Tooltip("sma:Q", title=f"SMA {mm_window} j (€/MWh)", format=".2f")
+    ]
+)
+
+# Courbe moyenne mobile
+sma_line = base.transform_filter("datum.sma != null").mark_line(
+    strokeWidth=3, color="#22c55e"
+).encode(
+    y="sma:Q"
+)
+
+# Points invisibles pour accrocher le hover
+points = base.mark_point(opacity=0).encode(
+    y="avg:Q"
+).add_params(hover)
+
+# Point visible au survol
+hover_point = base.mark_circle(size=60, color="#1f2937").encode(
+    y="avg:Q"
+).transform_filter(hover)
+
+# Règle verticale au survol
+v_rule = base.mark_rule(color="#9ca3af").encode().transform_filter(hover)
+
+chart = alt.layer(
+    spot_line, sma_line, points, v_rule, hover_point
+).properties(
+    height=420, width="container"
+).interactive()  # zoom/pan si tu veux
+
 st.altair_chart(chart, use_container_width=True)
+# =======================================================================
+
 
 
 # ----------------------------- Synthèse (unique)
