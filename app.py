@@ -301,14 +301,35 @@ st.session_state.setdefault("contract_clicks", [])  # liste de dicts: {'date', '
 # ---------- 1) Couverture du contrat en cours (toujours en premier)
 st.subheader("Couverture du contrat en cours")
 
-# total modifiable ici
-total_mwh = st.number_input(
-    "Volume total (MWh)", min_value=0.0,
-    value=float(st.session_state["contract_total_mwh"]),
-    step=10.0, key="total_input_mwh"
-)
-if total_mwh != st.session_state["contract_total_mwh"]:
-    st.session_state["contract_total_mwh"] = total_mwh
+# --- Volume total (stable + virgules) ---
+st.markdown("#### Volume total (MWh)")
+with st.form("form_total_mwh", clear_on_submit=False):
+    # Valeur affichée = état actuel, formatée sans casse
+    total_str_default = f'{st.session_state["contract_total_mwh"]:.2f}'.rstrip('0').rstrip('.')
+    total_str = st.text_input(
+        "Volume total (MWh)",
+        value=st.session_state.get("total_input_mwh_str", total_str_default),
+        key="total_input_mwh_str",
+        placeholder="ex: 250,5"
+    )
+    apply_total = st.form_submit_button("Appliquer")
+
+if apply_total:
+    s = (st.session_state.get("total_input_mwh_str","") or "").strip().replace(",", ".")
+    s = re.sub(r"[^0-9.\-]", "", s)
+    try:
+        v = float(s)
+    except:
+        v = None
+    if v is None or v < 0:
+        st.warning("Merci d’entrer un **volume total** valide (≥ 0).")
+    else:
+        st.session_state["contract_total_mwh"] = float(v)
+        # on garde la chaîne propre dans le champ
+        st.session_state["total_input_mwh_str"] = str(v).rstrip('0').rstrip('.')
+        st.rerun()
+        
+total_mwh = float(st.session_state["contract_total_mwh"])
 
 # totaux à partir des clics existants
 _clicks_df = pd.DataFrame(st.session_state["contract_clicks"])
