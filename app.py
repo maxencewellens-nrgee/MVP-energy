@@ -328,7 +328,7 @@ def render_contract_module(title: str, ns: str, default_total: float = 200.0, de
         c2.metric("Total déjà fixé", f"{fixed_mwh:.0f} MWh")
         c3.metric("Total restant", f"{rest_mwh:.0f} MWh")
         c4.metric("Couverture", f"{cov_pct:.1f} %")
-        c5.metric("Prix d’achat moyen", f"{avg_simple:.2f} €/MWh" if avg_simple is not None else "—")
+        c5.metric("Prix d’achat moyen", f"{avg_simple:.0f} €/MWh" if avg_simple is not None else "—")
         st.progress(min(cov_pct/100.0, 1.0))
         if avg_pond is not None:
             st.caption(f"(Référence) Prix moyen pondéré : **{avg_pond:.2f} €/MWh**")
