@@ -207,14 +207,12 @@ else:
     # Titre demandé
     st.subheader("Historique prix marché électricité")
 
-# ----------------------------- moyenne mobile
 
+# ===================== Graphique interactif BE spot =====================
 st.subheader("Moyenne 30-60-90 jours")
 
-# Choix fenêtre pour la moyenne mobile
 mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
 
-# Prépare les données
 vis = daily.copy()
 vis["date"] = pd.to_datetime(vis["date"])
 vis = vis.sort_values("date")
@@ -223,45 +221,56 @@ vis["sma"] = vis["avg"].rolling(
     min_periods=max(5, int(mm_window)//3)
 ).mean()
 
-# Courbe SPOT (noir) avec tooltip personnalisé
-spot_line = (
-    alt.Chart(vis)
-    .mark_line()
-    .encode(
-        x=alt.X(
-            "date:T",
-            title="Date",
-            axis=alt.Axis(
-                format="%b",          # Jan, Fév, Mar, ...
-                labelAngle=0,
-                tickCount="month"     # un tick par mois
-            )
-        ),
-        y=alt.Y("avg:Q", title="€/MWh", scale=alt.Scale(zero=False)),
-        tooltip=[
-            alt.Tooltip("date:T", title="Date", format="%d/%m/%Y"),
-            alt.Tooltip("avg:Q",  title="SPOT (€/MWh)", format=".2f"),
-        ],
-        color=alt.value("#1f2937")  # noir/gris foncé
-    )
+# Sélection 'hover' (survol souris) au plus proche
+hover = alt.selection_point(
+    fields=["date"],
+    nearest=True,
+    on="mouseover",
+    empty="none",
 )
 
-# Courbe SMA (verte) SANS tooltip
-sma_line = (
-    alt.Chart(vis.dropna(subset=["sma"]))
-    .mark_line(strokeWidth=3)
-    .encode(
-        x="date:T",
-        y="sma:Q",
-        color=alt.value("#22c55e")
-    )
-    .encode(tooltip=None)  # <- clé: pas d’infobulle sur la moyenne
+base = alt.Chart(vis).encode(
+    x=alt.X("date:T", title="Date"),
 )
 
-# Combine + interaction
-chart = (spot_line + sma_line).properties(height=420, width="container").interactive()
+# Courbe des prix spot
+spot_line = base.mark_line(strokeWidth=1.5, color="#1f2937").encode(
+    y=alt.Y("avg:Q", title="€/MWh"),
+    tooltip=[
+        alt.Tooltip("date:T", title="Date"),
+        alt.Tooltip("avg:Q", title="BE spot (€/MWh)", format=".2f"),
+        alt.Tooltip("sma:Q", title=f"SMA {mm_window} j (€/MWh)", format=".2f")
+    ]
+)
+
+# Courbe moyenne mobile
+sma_line = base.transform_filter("datum.sma != null").mark_line(
+    strokeWidth=3, color="#22c55e"
+).encode(
+    y="sma:Q"
+)
+
+# Points invisibles pour accrocher le hover
+points = base.mark_point(opacity=0).encode(
+    y="avg:Q"
+).add_params(hover)
+
+# Point visible au survol
+hover_point = base.mark_circle(size=60, color="#1f2937").encode(
+    y="avg:Q"
+).transform_filter(hover)
+
+# Règle verticale au survol
+v_rule = base.mark_rule(color="#9ca3af").encode().transform_filter(hover)
+
+chart = alt.layer(
+    spot_line, sma_line, points, v_rule, hover_point
+).properties(
+    height=420, width="container"
+).interactive()  # zoom/pan si tu veux
 
 st.altair_chart(chart, use_container_width=True)
+# =======================================================================
 
 
 
@@ -305,7 +314,7 @@ else:
 
 # ===================== CONTRATS MULTI-MODULES (REMPLACEMENT ENTIER) =====================
 
-def render_contract_module(title: str, ns: str, default_total: float = 0.0, default_max_clicks: int = 5):
+def render_contract_module(title: str, ns: str, default_total: float = 200.0, default_max_clicks: int = 5):
     # === 1 GROS CADRE qui englobe TOUT le module ===
     with st.container(border=True):
         st.subheader(title)
