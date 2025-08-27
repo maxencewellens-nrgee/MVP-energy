@@ -221,10 +221,11 @@ vis["sma"] = vis["avg"].rolling(
     min_periods=max(5, int(mm_window)//3)
 ).mean()
 
-# >>> Ajout : champs formatés pour le tooltip
-vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")                  # ex. 20/01/25
+# Champs formatés pour le tooltip
+vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")   # ex. 20/01/25
 vis["spot_str"] = vis["avg"].apply(lambda v: f"{v:.2f}".replace(".", ",") + "€")  # ex. 209,65€
 
+# Sélection de survol
 hover = alt.selection_point(
     fields=["date"],
     nearest=True,
@@ -236,33 +237,52 @@ base = alt.Chart(vis).encode(
     x=alt.X("date:T", title="Date"),
 )
 
-# Courbe des prix spot — tooltip personnalisé
+# Lignes SANS tooltip
 spot_line = base.mark_line(strokeWidth=1.5, color="#1f2937").encode(
     y=alt.Y("avg:Q", title="€/MWh"),
+    tooltip=None
+)
+
+sma_line = base.transform_filter("datum.sma != null").mark_line(
+    strokeWidth=3, color="#22c55e"
+).encode(
+    y="sma:Q",
+    tooltip=None
+)
+
+# Points invisibles pour accrocher le hover (sans tooltip)
+points = base.mark_point(opacity=0).encode(
+    y="avg:Q",
+    tooltip=None
+).add_params(hover)
+
+# Point visible au survol (sans tooltip)
+hover_point = base.mark_circle(size=60, color="#1f2937").encode(
+    y="avg:Q",
+    tooltip=None
+).transform_filter(hover)
+
+# Règle verticale (sans tooltip)
+v_rule = base.mark_rule(color="#9ca3af").encode(
+    tooltip=None
+).transform_filter(hover)
+
+# >>> Point "fantôme" qui porte SEUL le tooltip formaté
+tooltip_point = base.mark_point(opacity=0).encode(
+    y="avg:Q",
     tooltip=[
         alt.Tooltip("date_str:N", title="Date"),
         alt.Tooltip("spot_str:N", title="Spot")
     ]
-)
+).transform_filter(hover)
 
-# Courbe moyenne mobile (sans tooltip)
-sma_line = base.transform_filter("datum.sma != null").mark_line(
-    strokeWidth=3, color="#22c55e"
-).encode(
-    y="sma:Q"
-)
-
-points = base.mark_point(opacity=0).encode(y="avg:Q").add_params(hover)
-hover_point = base.mark_circle(size=60, color="#1f2937").encode(y="avg:Q").transform_filter(hover)
-v_rule = base.mark_rule(color="#9ca3af").encode().transform_filter(hover)
-
-chart = alt.layer(spot_line, sma_line, points, v_rule, hover_point).properties(
+chart = alt.layer(
+    spot_line, sma_line, points, v_rule, hover_point, tooltip_point
+).properties(
     height=420, width="container"
 ).interactive()
 
 st.altair_chart(chart, use_container_width=True)
-
-# =======================================================================
 
 
 # ----------------------------- Synthèse (unique)
