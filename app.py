@@ -213,6 +213,7 @@ st.subheader("Moyenne 30-60-90 jours")
 
 mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
 
+# --- Préparation des données
 vis = daily.copy()
 vis["date"] = pd.to_datetime(vis["date"])
 vis = vis.sort_values("date")
@@ -221,21 +222,30 @@ vis["sma"] = vis["avg"].rolling(
     min_periods=max(5, int(mm_window)//3)
 ).mean()
 
-# Champs formatés pour le tooltip
-vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")
-vis["spot_str"] = vis["avg"].apply(lambda v: f"{v:.2f}".replace(".", ",") + "€")
+# Champs formatés pour affichage
+vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")  # ex : 20/01/25
+vis["spot_str"] = vis["avg"].apply(lambda v: f"{v:.2f}".replace(".", ",") + "€")  # ex : 209,65€
 
-# Sélection hover
-hover = alt.selection_point(fields=["date"], nearest=True, on="mouseover", empty="none")
+# --- Sélection souris : suit le mouvement, ne se vide jamais
+hover = alt.selection_point(
+    fields=["date"],
+    nearest=True,
+    on="mousemove",   # pas besoin de viser la boule
+    empty="none",
+    clear=False       # reste affiché quand on sort du graphe
+)
 
-base = alt.Chart(vis).encode(x=alt.X("date:T", title="Date"))
+base = alt.Chart(vis).encode(
+    x=alt.X("date:T", title="Date")
+)
 
-# Lignes SANS tooltip (tooltip vide)
+# Courbe spot (sans tooltip)
 spot_line = base.mark_line(strokeWidth=1.5, color="#1f2937").encode(
     y=alt.Y("avg:Q", title="€/MWh"),
     tooltip=[]
 )
 
+# Courbe moyenne mobile (sans tooltip)
 sma_line = base.transform_filter("datum.sma != null").mark_line(
     strokeWidth=3, color="#22c55e"
 ).encode(
@@ -243,37 +253,64 @@ sma_line = base.transform_filter("datum.sma != null").mark_line(
     tooltip=[]
 )
 
-# Points invisibles pour accrocher le hover (pas de tooltip)
+# Points invisibles pour accrocher la sélection
 points = base.mark_point(opacity=0).encode(
     y="avg:Q",
     tooltip=[]
 ).add_params(hover)
 
-# Point visible au survol (pas de tooltip)
+# Point visible et règle verticale
 hover_point = base.mark_circle(size=60, color="#1f2937").encode(
     y="avg:Q",
     tooltip=[]
 ).transform_filter(hover)
 
-# Règle verticale (pas de tooltip)
 v_rule = base.mark_rule(color="#9ca3af").encode(
     tooltip=[]
 ).transform_filter(hover)
 
-# Unique calque qui PORTE le tooltip formaté
-tooltip_point = base.mark_point(opacity=0).encode(
+# Labels persistants (halo blanc + texte au-dessus du point)
+label_price_halo = base.mark_text(
+    dx=8, dy=-8, fontSize=12, fontWeight="bold",
+    stroke="white", strokeWidth=4, opacity=1
+).encode(
     y="avg:Q",
-    tooltip=[
-        alt.Tooltip("date_str:N", title="Date"),
-        alt.Tooltip("spot_str:N", title="Spot")
-    ]
+    text="spot_str:N"
 ).transform_filter(hover)
 
-chart = alt.layer(spot_line, sma_line, points, v_rule, hover_point, tooltip_point).properties(
+label_price = base.mark_text(
+    dx=8, dy=-8, fontSize=12, fontWeight="bold", color="#111827", opacity=1
+).encode(
+    y="avg:Q",
+    text="spot_str:N"
+).transform_filter(hover)
+
+# Label date sous le point (optionnel)
+label_date_halo = base.mark_text(
+    dx=8, dy=10, fontSize=11,
+    stroke="white", strokeWidth=4, opacity=1
+).encode(
+    y="avg:Q",
+    text="date_str:N"
+).transform_filter(hover)
+
+label_date = base.mark_text(
+    dx=8, dy=10, fontSize=11, color="#374151", opacity=1
+).encode(
+    y="avg:Q",
+    text="date_str:N"
+).transform_filter(hover)
+
+chart = alt.layer(
+    spot_line, sma_line, points, v_rule, hover_point,
+    label_price_halo, label_price,
+    label_date_halo, label_date
+).properties(
     height=420, width="container"
 ).interactive()
 
 st.altair_chart(chart, use_container_width=True)
+
 
 
 
