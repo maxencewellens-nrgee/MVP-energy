@@ -355,23 +355,22 @@ else:
 
 # ===================== CONTRATS MULTI-MODULES (REMPLACEMENT ENTIER) =====================
 
-def render_contract_module(
-    title: str,
-    ns: str,
-    default_total: float = 200.0,
-    default_max_clicks: int = 5,
-    default_cal_price: float = 95.0,   # ← prix CAL par défaut (€/MWh) pour ce module
-):
-    # === 1 GROS CADRE qui englobe TOUT le module ===
+# Dictionnaire des prix CAL (issus de ta synthèse)
+cal_prices = {
+    "y2026": 84.13,
+    "y2027": 79.33,
+    "y2028": 74.49,
+}
+
+def render_contract_module(title: str, ns: str, default_total: float = 200.0, default_max_clicks: int = 5):
     with st.container(border=True):
         st.subheader(title)
 
-        # ---------- Clés uniques du module
+        # ---------- Clés uniques
         total_key   = f"{ns}__total_mwh"
         clicks_key  = f"{ns}__clicks"
         max_key     = f"{ns}__max_clicks"
-        cal_key     = f"{ns}__cal_price"
-        init_key    = f"{ns}__initialized"   # drapeau d'init
+        init_key    = f"{ns}__initialized"
 
         date_key    = f"{ns}__new_click_date"
         price_key   = f"{ns}__new_click_price"
@@ -382,65 +381,57 @@ def render_contract_module(
         del_btn     = f"{ns}__btn_delete_click"
         dl_btn      = f"{ns}__dl_csv"
 
-        # ---------- INIT une seule fois
+        # ---------- INIT
         if init_key not in st.session_state:
             st.session_state[total_key]  = float(default_total)
-            st.session_state[clicks_key] = []                  # liste vide
+            st.session_state[clicks_key] = []
             st.session_state[max_key]    = int(default_max_clicks)
-            st.session_state[cal_key]    = float(default_cal_price)
             st.session_state[init_key]   = True
 
-        # ---------- 1) Paramètres de contrat
-        cA, cB, cC = st.columns([1.2, 1, 1])
-        with cA:
-            total_mwh = st.number_input(
-                "Volume total (MWh)",
-                min_value=0.0, step=5.0, format="%.0f",
-                key=total_key,
-            )
-        with cB:
-            cal_price = st.number_input(
-                "Prix CAL (€/MWh)",
-                min_value=0.0, step=1.0, format="%.0f",
-                key=cal_key,
-                help="Prix forward utilisé pour le budget projeté."
-            )
-        with cC:
-            max_clicks = st.number_input(
-                "Clics max autorisés",
-                min_value=1, max_value=20, step=1, format="%d",
-                key=max_key,
-            )
+        # ---------- 1) Couverture
+        total_mwh = st.number_input(
+            "Volume total (MWh)",
+            min_value=0.0, step=5.0, format="%.0f", key=total_key,
+        )
 
-        # ---------- Couverture & prix moyen
         clicks = st.session_state.get(clicks_key, [])
         _df = pd.DataFrame(clicks)
 
-        # types sûrs
-        if not _df.empty:
-            _df["volume"] = pd.to_numeric(_df["volume"], errors="coerce").fillna(0.0)
-            _df["price"]  = pd.to_numeric(_df["price"],  errors="coerce").fillna(0.0)
-
         fixed_mwh = float(_df["volume"].sum()) if not _df.empty else 0.0
-        if total_mwh > 0:
-            fixed_mwh = min(fixed_mwh, float(total_mwh))  # pas au-delà du contrat
-
-        rest_mwh  = max(0.0, float(total_mwh) - fixed_mwh)
+        rest_mwh  = max(0.0, total_mwh - fixed_mwh)
         cov_pct   = round((fixed_mwh / total_mwh * 100.0), 2) if total_mwh > 0 else 0.0
 
         avg_simple = round(float(_df["price"].mean()), 2) if not _df.empty else None
         avg_pond   = round(((_df["price"] * _df["volume"]).sum() / fixed_mwh), 2) if fixed_mwh > 0 else None
 
-        # ---------- 1.b) Cadrans couverture
+        # --- Calcul budget actuel & projeté
+        cal_price = cal_prices.get(ns, None)
+        budget_actuel   = fixed_mwh * avg_pond if avg_pond is not None else 0.0
+        budget_projete  = rest_mwh * cal_price if cal_price is not None else 0.0
+        budget_total    = budget_actuel + budget_projete
+
+        # ---------- Affichage métriques
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Volume total", f"{total_mwh:.0f} MWh")
         c2.metric("Total déjà fixé", f"{fixed_mwh:.0f} MWh")
         c3.metric("Total restant", f"{rest_mwh:.0f} MWh")
         c4.metric("Couverture", f"{cov_pct:.1f} %")
         c5.metric("Prix d’achat moyen", f"{avg_simple:.2f} €/MWh" if avg_simple is not None else "—")
+
         st.progress(min(cov_pct/100.0, 1.0))
+
         if avg_pond is not None:
             st.caption(f"(Référence) Prix moyen pondéré : **{avg_pond:.2f} €/MWh**")
+
+        # ---------- Nouveau bloc budget
+        st.markdown("### Budget")
+        bc1, bc2, bc3 = st.columns(3)
+        bc1.metric("Budget actuel", f"{budget_actuel:,.0f} €")
+        bc2.metric("Budget projeté", f"{budget_projete:,.0f} €" if cal_price else "—")
+        bc3.metric("Budget total estimé", f"{budget_total:,.0f} €")
+
+        # (le reste de ton code inchangé : nombre de clics autorisés, ajout clics, suppression, CSV etc.)
+
 
         # ---------- 2) Entrées / clics
         st.subheader("Entrées / clics")
