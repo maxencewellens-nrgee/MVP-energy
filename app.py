@@ -307,30 +307,6 @@ chart = alt.layer(
     height=420, width="container"
 ).interactive()
 
-# Label date sous le point (optionnel)
-label_date_halo = base.mark_text(
-    dx=8, dy=10, fontSize=11,
-    stroke="white", strokeWidth=4, opacity=1
-).encode(
-    y="avg:Q",
-    text="date_str:N"
-).transform_filter(hover)
-
-label_date = base.mark_text(
-    dx=8, dy=10, fontSize=11, color="#374151", opacity=1
-).encode(
-    y="avg:Q",
-    text="date_str:N"
-).transform_filter(hover)
-
-chart = alt.layer(
-    spot_line, sma_line, points, v_rule, hover_point,
-    label_price_halo, label_price,
-    label_date_halo, label_date
-).properties(
-    height=420, width="container"
-).interactive()
-
 st.altair_chart(chart, use_container_width=True)
 
 
