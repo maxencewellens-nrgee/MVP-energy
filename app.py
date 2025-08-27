@@ -207,7 +207,6 @@ else:
     # Titre demandé
     st.subheader("Historique prix marché électricité")
 
-
 # ===================== Graphique interactif BE spot =====================
 st.subheader("Moyenne 30-60-90 jours")
 
@@ -222,52 +221,45 @@ vis["sma"] = vis["avg"].rolling(
 ).mean()
 
 # Champs formatés pour le tooltip
-vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")   # ex. 20/01/25
-vis["spot_str"] = vis["avg"].apply(lambda v: f"{v:.2f}".replace(".", ",") + "€")  # ex. 209,65€
+vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")
+vis["spot_str"] = vis["avg"].apply(lambda v: f"{v:.2f}".replace(".", ",") + "€")
 
-# Sélection de survol
-hover = alt.selection_point(
-    fields=["date"],
-    nearest=True,
-    on="mouseover",
-    empty="none",
-)
+# Sélection hover
+hover = alt.selection_point(fields=["date"], nearest=True, on="mouseover", empty="none")
 
-base = alt.Chart(vis).encode(
-    x=alt.X("date:T", title="Date"),
-)
+base = alt.Chart(vis).encode(x=alt.X("date:T", title="Date"))
 
-# Lignes SANS tooltip
+# Lignes SANS tooltip (tooltip vide)
 spot_line = base.mark_line(strokeWidth=1.5, color="#1f2937").encode(
     y=alt.Y("avg:Q", title="€/MWh"),
-    tooltip=None
+    tooltip=[]
 )
 
 sma_line = base.transform_filter("datum.sma != null").mark_line(
     strokeWidth=3, color="#22c55e"
 ).encode(
     y="sma:Q",
-    tooltip=None
+    tooltip=[]
 )
 
-# Points invisibles pour accrocher le hover (sans tooltip)
+# Points invisibles pour accrocher le hover (pas de tooltip)
 points = base.mark_point(opacity=0).encode(
     y="avg:Q",
-    tooltip=None
+    tooltip=[]
 ).add_params(hover)
 
-# Point visible au survol (sans tooltip)
+# Point visible au survol (pas de tooltip)
 hover_point = base.mark_circle(size=60, color="#1f2937").encode(
     y="avg:Q",
-    tooltip=None
+    tooltip=[]
 ).transform_filter(hover)
 
-# Règle verticale (sans tooltip)
+# Règle verticale (pas de tooltip)
 v_rule = base.mark_rule(color="#9ca3af").encode(
-    tooltip=None
+    tooltip=[]
 ).transform_filter(hover)
 
-# >>> Point "fantôme" qui porte SEUL le tooltip formaté
+# Unique calque qui PORTE le tooltip formaté
 tooltip_point = base.mark_point(opacity=0).encode(
     y="avg:Q",
     tooltip=[
@@ -276,13 +268,12 @@ tooltip_point = base.mark_point(opacity=0).encode(
     ]
 ).transform_filter(hover)
 
-chart = alt.layer(
-    spot_line, sma_line, points, v_rule, hover_point, tooltip_point
-).properties(
+chart = alt.layer(spot_line, sma_line, points, v_rule, hover_point, tooltip_point).properties(
     height=420, width="container"
 ).interactive()
 
 st.altair_chart(chart, use_container_width=True)
+
 
 
 # ----------------------------- Synthèse (unique)
