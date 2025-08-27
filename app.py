@@ -221,7 +221,10 @@ vis["sma"] = vis["avg"].rolling(
     min_periods=max(5, int(mm_window)//3)
 ).mean()
 
-# Sélection 'hover' (survol souris) au plus proche
+# >>> Ajout : champs formatés pour le tooltip
+vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")                  # ex. 20/01/25
+vis["spot_str"] = vis["avg"].apply(lambda v: f"{v:.2f}".replace(".", ",") + "€")  # ex. 209,65€
+
 hover = alt.selection_point(
     fields=["date"],
     nearest=True,
@@ -233,45 +236,33 @@ base = alt.Chart(vis).encode(
     x=alt.X("date:T", title="Date"),
 )
 
-# Courbe des prix spot
+# Courbe des prix spot — tooltip personnalisé
 spot_line = base.mark_line(strokeWidth=1.5, color="#1f2937").encode(
     y=alt.Y("avg:Q", title="€/MWh"),
     tooltip=[
-        alt.Tooltip("date:T", title="Date"),
-        alt.Tooltip("avg:Q", title="BE spot (€/MWh)", format=".2f"),
-        alt.Tooltip("sma:Q", title=f"SMA {mm_window} j (€/MWh)", format=".2f")
+        alt.Tooltip("date_str:N", title="Date"),
+        alt.Tooltip("spot_str:N", title="Spot")
     ]
 )
 
-# Courbe moyenne mobile
+# Courbe moyenne mobile (sans tooltip)
 sma_line = base.transform_filter("datum.sma != null").mark_line(
     strokeWidth=3, color="#22c55e"
 ).encode(
     y="sma:Q"
 )
 
-# Points invisibles pour accrocher le hover
-points = base.mark_point(opacity=0).encode(
-    y="avg:Q"
-).add_params(hover)
-
-# Point visible au survol
-hover_point = base.mark_circle(size=60, color="#1f2937").encode(
-    y="avg:Q"
-).transform_filter(hover)
-
-# Règle verticale au survol
+points = base.mark_point(opacity=0).encode(y="avg:Q").add_params(hover)
+hover_point = base.mark_circle(size=60, color="#1f2937").encode(y="avg:Q").transform_filter(hover)
 v_rule = base.mark_rule(color="#9ca3af").encode().transform_filter(hover)
 
-chart = alt.layer(
-    spot_line, sma_line, points, v_rule, hover_point
-).properties(
+chart = alt.layer(spot_line, sma_line, points, v_rule, hover_point).properties(
     height=420, width="container"
-).interactive()  # zoom/pan si tu veux
+).interactive()
 
 st.altair_chart(chart, use_container_width=True)
-# =======================================================================
 
+# =======================================================================
 
 
 # ----------------------------- Synthèse (unique)
