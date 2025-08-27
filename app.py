@@ -299,7 +299,7 @@ st.session_state.setdefault("contract_total_mwh", 200.0)
 st.session_state.setdefault("contract_clicks", [])  # liste de dicts: {'date', 'price', 'volume'}
 
 # ---------- 1) Couverture du contrat en cours (toujours en premier)
-st.subheader("Couverture du contrat en cours")
+st.subheader("Couverture du contrat 2026")
 
 # Initialise une seule fois la valeur par défaut
 if "contract_total_mwh" not in st.session_state:
