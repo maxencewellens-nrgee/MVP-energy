@@ -337,7 +337,7 @@ def render_contract_module(title: str, ns: str, default_total: float = 200.0, de
 
         # ---------- Paramètre : nombre de clics autorisés
         st.markdown("### Paramètre : nombre de clics autorisés")
-        max_clicks = st.number_input("Nombre maximum de clics autorisés", min_value=1, max_value=20, step=1, format="%d", key=max_key, # << clé unique par ns (y2026/y2027/y2028))
+        max_clicks = st.number_input("Nombre maximum de clics autorisés", min_value=1, max_value=20, step=1, format="%d", key=max_key)
         used_clicks = len(clicks)
         left_clicks = max(0, int(max_clicks) - used_clicks)
         cx1, cx2, cx3 = st.columns(3)
