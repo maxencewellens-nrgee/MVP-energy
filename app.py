@@ -207,63 +207,57 @@ else:
     # Titre demandé
     st.subheader("Historique prix marché électricité")
 
-# ---------- GRAPHIQUE SPOT (ligne noire) + MOYENNE MOBILE (ligne verte)
+# --- GRAND GRAPHIQUE + moyenne mobile (interactif, tooltip SPOT, axe par mois)
 st.subheader("Moyenne 30-60-90 jours")
 
+# Choix fenêtre pour la moyenne mobile
 mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
 
 vis = daily.copy()
 vis["date"] = pd.to_datetime(vis["date"])
 vis = vis.sort_values("date")
 
-# colonne 'spot' = prix jour (ex-avg), et formatages pour tooltips FR
-vis["spot"] = vis["avg"].astype(float)
-vis["date_label"] = vis["date"].dt.strftime("%d/%m/%y")
-vis["spot_label"] = vis["spot"].map(lambda x: f"{x:.2f} €".replace(".", ","))
-
 # SMA
-vis["sma"] = vis["spot"].rolling(
+vis["sma"] = vis["avg"].rolling(
     window=int(mm_window),
     min_periods=max(5, int(mm_window)//3)
 ).mean()
 
-# Axe X en français (mois abrégés)
-mois_fr = "['jan','fév','mars','avr','mai','juin','juil','août','sept','oct','nov','déc']"
-x_axis = alt.Axis(
-    title="Date",
-    labelExpr=f"{mois_fr}[month(datum.value)]",
-    labelAngle=0
-)
+# Champs 'propres' pour le tooltip (date fr + prix avec virgule et €)
+vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")
+vis["spot_str"] = vis["avg"].map(lambda x: f"{x:.2f}".replace(".", ",") + " €")
 
-# Ligne spot (noire) avec tooltips personnalisés
-spot_line = (
+# Courbe SPOT (noire) — tooltip seulement sur cette courbe
+price_line = (
     alt.Chart(vis)
     .mark_line()
     .encode(
-        x=alt.X("date:T", axis=x_axis),
-        y=alt.Y("spot:Q", title="€/MWh"),
+        x=alt.X(
+            "date:T",
+            title="Date",
+            axis=alt.Axis(format="%b", tickCount="month")  # étiquettes mensuelles: Jan, fév, mar...
+        ),
+        y=alt.Y("avg:Q", title="€/MWh"),
         tooltip=[
-            alt.Tooltip("date_label:N", title="Date"),
-            alt.Tooltip("spot_label:N",  title="Spot")
-        ]
+            alt.Tooltip("date_str:N", title="Date"),
+            alt.Tooltip("spot_str:N", title="SPOT")
+        ],
+        color=alt.value("#1f2937")  # noir/gris foncé
     )
 )
 
-# Ligne moyenne mobile (verte)
+# Courbe SMA (verte) — pas de tooltip
 sma_line = (
     alt.Chart(vis.dropna(subset=["sma"]))
-    .mark_line(strokeWidth=3, color="#22c55e")
+    .mark_line(strokeWidth=3)
     .encode(
         x="date:T",
-        y=alt.Y("sma:Q", title="€/MWh"),
-        tooltip=[
-            alt.Tooltip("date_label:N", title="Date"),
-            alt.Tooltip("sma:Q", title=f"SMA {mm_window} j", format=".2f")
-        ]
+        y="sma:Q",
+        color=alt.value("#22c55e")
     )
 )
 
-chart = (spot_line + sma_line).properties(height=420, width="container")
+chart = (price_line + sma_line).properties(height=420, width="container")
 st.altair_chart(chart, use_container_width=True)
 
 
