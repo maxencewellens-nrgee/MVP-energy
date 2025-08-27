@@ -534,8 +534,8 @@ def render_contract_module(title: str, ns: str, default_total: float = 200.0, de
         )
 
 # ======= Appel des trois modules (2026, 2027, 2028) avec un CAL par défaut =======
-render_contract_module("Couverture du contrat 2026", ns="y2026", default_cal_price=st.session_state.get("cal_26_price", 95.00))
-render_contract_module("Couverture du contrat 2027", ns="y2027", default_cal_price=st.session_state.get("cal_27_price", 88.50))
-render_contract_module("Couverture du contrat 2028", ns="y2028", default_cal_price=st.session_state.get("cal_28_price", 84.20))
+render_contract_module("Couverture du contrat 2026", ns="y2026")
+render_contract_module("Couverture du contrat 2027", ns="y2027")
+render_contract_module("Couverture du contrat 2028", ns="y2028")
 # ===================== FIN CONTRATS MULTI-MODULES =====================
 
