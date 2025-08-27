@@ -521,8 +521,8 @@ def render_contract_module(title: str, ns: str, default_total: float = 200.0, de
 
         st.markdown("### Budget (actuel / projeté / total)")
         b1, b2, b3, b4 = st.columns([1, 1, 1, 1])
-        b1.metric("Budget actuel", f"{current_budget:,.0f} €".replace(",", " "))
-        b2.metric("Budget projeté", f"{projected_budget:,.0f} €".replace(",", " "))
+        b1.metric("Budget fixé", f"{current_budget:,.0f} €".replace(",", " "))
+        b2.metric("Budget restant projeté", f"{projected_budget:,.0f} €".replace(",", " "))
         b3.metric("Budget total estimé", f"{total_budget:,.0f} €".replace(",", " "))
         b4.metric("Coût unitaire estimé", f"{unit_cost:.2f} €/MWh" if unit_cost is not None else "—")
 
