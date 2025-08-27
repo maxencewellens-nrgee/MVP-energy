@@ -220,16 +220,23 @@ vis["sma"] = vis["avg"].rolling(
     min_periods=max(5, int(mm_window)//3)
 ).mean()
 
-# Champs formatés pour le tooltip
+# Champs formatés
 vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")
 vis["spot_str"] = vis["avg"].apply(lambda v: f"{v:.2f}".replace(".", ",") + "€")
 
-# Sélection hover
-hover = alt.selection_point(fields=["date"], nearest=True, on="mouseover", empty="none")
+# 1) Sélection qui suit la souris ET ne se vide jamais (clear=False).
+#    'on="mousemove"' => tu n'as pas besoin de viser la boule.
+hover = alt.selection_point(
+    fields=["date"],
+    nearest=True,
+    on="mousemove",
+    empty="none",
+    clear=False,
+)
 
 base = alt.Chart(vis).encode(x=alt.X("date:T", title="Date"))
 
-# Lignes SANS tooltip (tooltip vide)
+# Lignes (sans tooltip)
 spot_line = base.mark_line(strokeWidth=1.5, color="#1f2937").encode(
     y=alt.Y("avg:Q", title="€/MWh"),
     tooltip=[]
@@ -237,44 +244,34 @@ spot_line = base.mark_line(strokeWidth=1.5, color="#1f2937").encode(
 
 sma_line = base.transform_filter("datum.sma != null").mark_line(
     strokeWidth=3, color="#22c55e"
-).encode(
-    y="sma:Q",
-    tooltip=[]
-)
+).encode(y="sma:Q", tooltip=[])
 
-# Points invisibles pour accrocher le hover (pas de tooltip)
-points = base.mark_point(opacity=0).encode(
-    y="avg:Q",
-    tooltip=[]
-).add_params(hover)
+# Points invisibles pour accrocher la sélection
+points = base.mark_point(opacity=0).encode(y="avg:Q", tooltip=[]).add_params(hover)
 
-# Point visible au survol (pas de tooltip)
-hover_point = base.mark_circle(size=60, color="#1f2937").encode(
+# Point visible + règle
+hover_point = base.mark_circle(size=60, color="#1f2937").encode(y="avg:Q", tooltip=[]).transform_filter(hover)
+v_rule = base.mark_rule(color="#9ca3af").encode(tooltip=[]).transform_filter(hover)
+
+# 2) Label texte PERSISTANT (pas un tooltip), lié à la sélection
+label_price = base.mark_text(dx=8, dy=-8, fontSize=12, fontWeight="bold", color="#111827",
+                             background="white", opacity=1).encode(
     y="avg:Q",
-    tooltip=[]
+    text="spot_str:N"
 ).transform_filter(hover)
 
-# Règle verticale (pas de tooltip)
-v_rule = base.mark_rule(color="#9ca3af").encode(
-    tooltip=[]
-).transform_filter(hover)
-
-# Unique calque qui PORTE le tooltip formaté
-tooltip_point = base.mark_point(opacity=0).encode(
+# (Option) un 2e label pour la date si tu la veux à côté :
+label_date = base.mark_text(dx=8, dy=10, fontSize=11, color="#374151",
+                            background="white", opacity=1).encode(
     y="avg:Q",
-    tooltip=[
-        alt.Tooltip("date_str:N", title="Date"),
-        alt.Tooltip("spot_str:N", title="Spot")
-    ]
+    text=alt.Text("date_str:N")
 ).transform_filter(hover)
 
-chart = alt.layer(spot_line, sma_line, points, v_rule, hover_point, tooltip_point).properties(
-    height=420, width="container"
-).interactive()
+chart = alt.layer(
+    spot_line, sma_line, points, v_rule, hover_point, label_price, label_date
+).properties(height=420, width="container").interactive()
 
 st.altair_chart(chart, use_container_width=True)
-
-
 
 # ----------------------------- Synthèse (unique)
 st.subheader("Synthèse Prix Spot et Forward")
@@ -297,8 +294,8 @@ else:
 
     k1, k2, k3 = st.columns(3)
     k1.metric("Moyenne depuis le début visible", f"{overall_avg} €/MWh")
-    k2.metric("Moyenne mois en cours (jusqu’à J−1)", f"{month_avg} €/MWh")
-    k3.metric("Dernier prix accessible (J−1)", f"{last['avg']:.2f} €/MWh")
+    k2.metric("Moyenne mois en cours", f"{month_avg} €/MWh")
+    k3.metric("Dernier prix", f"{last['avg']:.2f} €/MWh")
 
     # CAL FlexyPower (utilise ta fonction fetch_flexypower_cals() définie plus haut)
     try:
