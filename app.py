@@ -207,46 +207,46 @@ else:
     # Titre demandé
     st.subheader("Historique prix marché électricité")
 
-# --- GRAND GRAPHIQUE + moyenne mobile (interactif, tooltip SPOT, axe par mois)
+# ----------------------------- moyenne mobile
+
 st.subheader("Moyenne 30-60-90 jours")
 
 # Choix fenêtre pour la moyenne mobile
 mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
 
+# Prépare les données
 vis = daily.copy()
 vis["date"] = pd.to_datetime(vis["date"])
 vis = vis.sort_values("date")
-
-# SMA
 vis["sma"] = vis["avg"].rolling(
     window=int(mm_window),
     min_periods=max(5, int(mm_window)//3)
 ).mean()
 
-# Champs 'propres' pour le tooltip (date fr + prix avec virgule et €)
-vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")
-vis["spot_str"] = vis["avg"].map(lambda x: f"{x:.2f}".replace(".", ",") + " €")
-
-# Courbe SPOT (noire) — tooltip seulement sur cette courbe
-price_line = (
+# Courbe SPOT (noir) avec tooltip personnalisé
+spot_line = (
     alt.Chart(vis)
     .mark_line()
     .encode(
         x=alt.X(
             "date:T",
             title="Date",
-            axis=alt.Axis(format="%b", tickCount="month")  # étiquettes mensuelles: Jan, fév, mar...
+            axis=alt.Axis(
+                format="%b",          # Jan, Fév, Mar, ...
+                labelAngle=0,
+                tickCount="month"     # un tick par mois
+            )
         ),
-        y=alt.Y("avg:Q", title="€/MWh"),
+        y=alt.Y("avg:Q", title="€/MWh", scale=alt.Scale(zero=False)),
         tooltip=[
-            alt.Tooltip("date_str:N", title="Date"),
-            alt.Tooltip("spot_str:N", title="SPOT")
+            alt.Tooltip("date:T", title="Date", format="%d/%m/%Y"),
+            alt.Tooltip("avg:Q",  title="SPOT (€/MWh)", format=".2f"),
         ],
         color=alt.value("#1f2937")  # noir/gris foncé
     )
 )
 
-# Courbe SMA (verte) — pas de tooltip
+# Courbe SMA (verte) SANS tooltip
 sma_line = (
     alt.Chart(vis.dropna(subset=["sma"]))
     .mark_line(strokeWidth=3)
@@ -255,10 +255,14 @@ sma_line = (
         y="sma:Q",
         color=alt.value("#22c55e")
     )
+    .encode(tooltip=None)  # <- clé: pas d’infobulle sur la moyenne
 )
 
-chart = (price_line + sma_line).properties(height=420, width="container")
+# Combine + interaction
+chart = (spot_line + sma_line).properties(height=420, width="container").interactive()
+
 st.altair_chart(chart, use_container_width=True)
+
 
 
 # ----------------------------- Synthèse (unique)
