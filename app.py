@@ -399,18 +399,24 @@ else:
     st.markdown("### Clics enregistrés")
     st.dataframe(display_df, use_container_width=True)
 
-    # suppression d'une ligne
-    col_del1, col_del2 = st.columns([3, 1])
-    with col_del1:
-        del_idx = st.selectbox(
-            "Supprimer un clic",
-            options=list(range(1, len(display_df)+1)),
-            format_func=lambda i: f"{i+1} — {display_df.iloc[i]['Date']} | {display_df.iloc[i]['Volume (MWh)']} MWh @ {display_df.iloc[i]['Prix (€/MWh)']} €/MWh"
-        )
-    with col_del2:
-        if st.button("🗑️ Supprimer la ligne sélectionnée"):
-            st.session_state["contract_clicks"].pop(int(del_idx))
-            st.rerun()
+   # --- Suppression d'un clic (safe, sans IndexError)
+if not display_df.empty:
+    # Le tableau a déjà un index 1..N (voir plus haut). On l'utilise directement.
+    del_idx = st.selectbox(
+        "Supprimer un clic",
+        options=display_df.index.tolist(),  # [1..N]
+        format_func=lambda i: (
+            f"{i} — {display_df.loc[i, 'Date']} | "
+            f"{display_df.loc[i, 'Volume (MWh)']} MWh @ "
+            f"{display_df.loc[i, 'Prix (€/MWh)']} €/MWh"
+        ),
+        key="delete_click_selector",
+    )
+
+    if st.button("🗑️ Supprimer la ligne sélectionnée"):
+        # Dans la liste Python d'origine, l'élément #i est à l'index i-1
+        st.session_state["contract_clicks"].pop(del_idx - 1)
+        st.rerun()
 
     # export CSV
     csv_bytes = display_df.to_csv(index=False).encode("utf-8")
