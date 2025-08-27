@@ -307,10 +307,10 @@ def render_contract_module(title: str, ns: str, default_total: float = 200.0, de
         dl_btn     = f"{ns}__dl_csv"
 
         if init_key not in st.session_state:
-    st.session_state[total_key]  = float(default_total)
-    st.session_state[clicks_key] = []
-    st.session_state[max_key]    = int(default_max_clicks)
-    st.session_state[init_key]   = True
+            st.session_state[total_key]  = float(default_total)
+            st.session_state[clicks_key] = []
+            st.session_state[max_key]    = int(default_max_clicks)
+            st.session_state[init_key]   = True
 
         # ---------- Couverture
         total_mwh = st.number_input("Volume total (MWh)", min_value=0.0, step=5.0, format="%.0f", key=total_key)
