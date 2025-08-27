@@ -207,7 +207,7 @@ else:
     # Titre demandé
     st.subheader("Historique prix marché électricité")
 
-# ===================== Graphique interactif (tooltips FR: Date + Price) =====================
+# ---------- GRAPHIQUE SPOT (ligne noire) + MOYENNE MOBILE (ligne verte)
 st.subheader("Moyenne 30-60-90 jours")
 
 mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
@@ -215,59 +215,56 @@ mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="m
 vis = daily.copy()
 vis["date"] = pd.to_datetime(vis["date"])
 vis = vis.sort_values("date")
-vis["sma"] = vis["avg"].rolling(
+
+# colonne 'spot' = prix jour (ex-avg), et formatages pour tooltips FR
+vis["spot"] = vis["avg"].astype(float)
+vis["date_label"] = vis["date"].dt.strftime("%d/%m/%y")
+vis["spot_label"] = vis["spot"].map(lambda x: f"{x:.2f} €".replace(".", ","))
+
+# SMA
+vis["sma"] = vis["spot"].rolling(
     window=int(mm_window),
     min_periods=max(5, int(mm_window)//3)
 ).mean()
 
-# Sélection hover
-hover = alt.selection_point(fields=["date"], nearest=True, on="mouseover", empty="none")
-
-# Axe X = mois abrégés FR
+# Axe X en français (mois abrégés)
+mois_fr = "['jan','fév','mars','avr','mai','juin','juil','août','sept','oct','nov','déc']"
 x_axis = alt.Axis(
     title="Date",
-    format="%b",
-    labelAngle=0,
-    tickCount="month",
-    labelExpr="['jan','févr','mars','avr','mai','juin','juil','août','sept','oct','nov','déc'][month(datum.value)]"
+    labelExpr=f"{mois_fr}[month(datum.value)]",
+    labelAngle=0
 )
 
-# Base + champ calculé pour tooltip "Date" (mois FR)
-base = alt.Chart(vis).transform_calculate(
-    mois_fr="['jan','févr','mars','avr','mai','juin','juil','août','sept','oct','nov','déc'][month(datum.date)]"
-).encode(x=alt.X("date:T", axis=x_axis))
-
-# Courbe spot (NOUS NE MONTRONS QUE CELLE-CI DANS LE TOOLTIP)
-spot_line = base.mark_line(strokeWidth=1.5, color="#1f2937").encode(
-    y=alt.Y("avg:Q", title="€/MWh"),
-    tooltip=[
-        alt.Tooltip("mois_fr:N", title="Date"),
-        alt.Tooltip("avg:Q", title="Price (€/MWh)", format=".2f")
-    ]
+# Ligne spot (noire) avec tooltips personnalisés
+spot_line = (
+    alt.Chart(vis)
+    .mark_line()
+    .encode(
+        x=alt.X("date:T", axis=x_axis),
+        y=alt.Y("spot:Q", title="€/MWh"),
+        tooltip=[
+            alt.Tooltip("date_label:N", title="Date"),
+            alt.Tooltip("spot_label:N",  title="Spot")
+        ]
+    )
 )
 
-# Courbe SMA (pas de tooltip)
-sma_line = base.transform_filter("datum.sma != null") \
-    .mark_line(strokeWidth=3, color="#22c55e").encode(y="sma:Q")
+# Ligne moyenne mobile (verte)
+sma_line = (
+    alt.Chart(vis.dropna(subset=["sma"]))
+    .mark_line(strokeWidth=3, color="#22c55e")
+    .encode(
+        x="date:T",
+        y=alt.Y("sma:Q", title="€/MWh"),
+        tooltip=[
+            alt.Tooltip("date_label:N", title="Date"),
+            alt.Tooltip("sma:Q", title=f"SMA {mm_window} j", format=".2f")
+        ]
+    )
+)
 
-# Hover helpers
-points      = base.mark_point(opacity=0).encode(y="avg:Q").add_params(hover)
-hover_point = base.mark_circle(size=60, color="#1f2937").encode(y="avg:Q").transform_filter(hover)
-v_rule      = base.mark_rule(color="#9ca3af").transform_filter(hover)
-
-# Repère changement d'année
-year_rule = alt.Chart(vis).transform_filter("month(datum.date)==0 && date(datum.date)==1") \
-    .mark_rule(color="#e5e7eb").encode(x="date:T")
-year_label = alt.Chart(vis).transform_filter("month(datum.date)==0 && date(datum.date)==1") \
-    .mark_text(dy=18, color="#6b7280").encode(x="date:T", text=alt.Text("year(date):O"))
-
-chart = alt.layer(spot_line, sma_line, points, v_rule, hover_point, year_rule, year_label) \
-    .properties(height=420, width="container") \
-    .interactive()
-
+chart = (spot_line + sma_line).properties(height=420, width="container")
 st.altair_chart(chart, use_container_width=True)
-# =============================================================================
-
 
 
 # ----------------------------- Synthèse (unique)
