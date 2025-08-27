@@ -349,15 +349,9 @@ col1, col2, col3, col4 = st.columns([1, 1, 1, 0.8])
 with col1:
     new_date = st.date_input("Date du clic", value=date.today(), key="new_click_date")
 with col2:
-    new_price = st.number_input(
-    "Prix (€/MWh)",
-    min_value=0.0,
-    step=5.0,           # ← “+” ajoute 5
-    format="%.2f",
-    key="new_click_price",
-)
+    new_price = st.number_input("Prix (€/MWh)", min_value=0.0,step=5.0, format="%.2f", key="new_click_price")
 with col3:
-new_vol = st.number_input(
+    new_vol = st.number_input(
     "Volume (MWh)",
     min_value=0.0,
     step=5.0,          # ← “+” ajoute 5
