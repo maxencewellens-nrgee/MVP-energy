@@ -353,14 +353,25 @@ else:
     except Exception as e:
         st.warning(f"CAL FlexyPower indisponible : {e}")
 
-# ===================== CONTRATS MULTI-MODULES (REMPLACEMENT ENTIER) =====================
+# ===================== CONTRATS MULTI-MODULES (REFONTE UX) =====================
 
-# Dictionnaire des prix CAL (issus de ta synthèse)
-cal_prices = {
-    "y2026": 84.13,
-    "y2027": 79.33,
-    "y2028": 74.49,
+# 1) Récup prix CAL depuis la synthèse (fallback si indispo)
+try:
+    _cal = fetch_flexypower_cals()
+except Exception:
+    _cal = {"CAL-26": None, "CAL-27": None, "CAL-28": None, "date": None}
+
+CAL_FALLBACK = {"CAL-26": 84.13, "CAL-27": 79.33, "CAL-28": 74.49}
+CAL_USED = {
+    "y2026": _cal.get("CAL-26") or CAL_FALLBACK["CAL-26"],
+    "y2027": _cal.get("CAL-27") or CAL_FALLBACK["CAL-27"],
+    "y2028": _cal.get("CAL-28") or CAL_FALLBACK["CAL-28"],
 }
+CAL_DATE = _cal.get("date") or "—"
+
+def _fmt_eur(amount: float, dec: int = 0) -> str:
+    s = f"{amount:,.{dec}f}".replace(",", " ")
+    return f"{s} €"
 
 def render_contract_module(title: str, ns: str, default_total: float = 200.0, default_max_clicks: int = 5):
     with st.container(border=True):
@@ -388,152 +399,147 @@ def render_contract_module(title: str, ns: str, default_total: float = 200.0, de
             st.session_state[max_key]    = int(default_max_clicks)
             st.session_state[init_key]   = True
 
-        # ---------- 1) Couverture
+        # ---------- (A) SYNTHÈSE & COUVERTURE
         total_mwh = st.number_input(
             "Volume total (MWh)",
             min_value=0.0, step=5.0, format="%.0f", key=total_key,
         )
 
         clicks = st.session_state.get(clicks_key, [])
-        _df = pd.DataFrame(clicks)
+        df_clicks = pd.DataFrame(clicks)
 
-        fixed_mwh = float(_df["volume"].sum()) if not _df.empty else 0.0
-        rest_mwh  = max(0.0, total_mwh - fixed_mwh)
+        # types sûrs
+        if not df_clicks.empty:
+            df_clicks["volume"] = pd.to_numeric(df_clicks["volume"], errors="coerce").fillna(0.0)
+            df_clicks["price"]  = pd.to_numeric(df_clicks["price"],  errors="coerce").fillna(0.0)
+
+        fixed_mwh = float(df_clicks["volume"].sum()) if not df_clicks.empty else 0.0
+        fixed_mwh = min(fixed_mwh, float(total_mwh)) if total_mwh > 0 else 0.0
+        rest_mwh  = max(0.0, float(total_mwh) - fixed_mwh)
         cov_pct   = round((fixed_mwh / total_mwh * 100.0), 2) if total_mwh > 0 else 0.0
 
-        avg_simple = round(float(_df["price"].mean()), 2) if not _df.empty else None
-        avg_pond   = round(((_df["price"] * _df["volume"]).sum() / fixed_mwh), 2) if fixed_mwh > 0 else None
+        avg_simple = round(float(df_clicks["price"].mean()), 2) if not df_clicks.empty else None
+        avg_pond   = round(( (df_clicks["price"] * df_clicks["volume"]).sum() / fixed_mwh ), 2) if fixed_mwh > 0 else None
 
-        # --- Calcul budget actuel & projeté
-        cal_price = cal_prices.get(ns, None)
-        budget_actuel   = fixed_mwh * avg_pond if avg_pond is not None else 0.0
-        budget_projete  = rest_mwh * cal_price if cal_price is not None else 0.0
-        budget_total    = budget_actuel + budget_projete
+        cal_price = CAL_USED.get(ns)  # prix forward pour l’année du module
 
-        # ---------- Affichage métriques
-        c1, c2, c3, c4, c5 = st.columns(5)
+        c1, c2, c3, c4, c5 = st.columns([1,1,1,1,1.2])
         c1.metric("Volume total", f"{total_mwh:.0f} MWh")
-        c2.metric("Total déjà fixé", f"{fixed_mwh:.0f} MWh")
-        c3.metric("Total restant", f"{rest_mwh:.0f} MWh")
+        c2.metric("Déjà fixé", f"{fixed_mwh:.0f} MWh")
+        c3.metric("Restant", f"{rest_mwh:.0f} MWh")
         c4.metric("Couverture", f"{cov_pct:.1f} %")
-        c5.metric("Prix d’achat moyen", f"{avg_simple:.2f} €/MWh" if avg_simple is not None else "—")
-
-        st.progress(min(cov_pct/100.0, 1.0))
-
-        if avg_pond is not None:
-            st.caption(f"(Référence) Prix moyen pondéré : **{avg_pond:.2f} €/MWh**")
-
-        # ---------- Nouveau bloc budget
-        st.markdown("### Budget")
-        bc1, bc2, bc3 = st.columns(3)
-        bc1.metric("Budget actuel", f"{budget_actuel:,.0f} €")
-        bc2.metric("Budget projeté", f"{budget_projete:,.0f} €" if cal_price else "—")
-        bc3.metric("Budget total estimé", f"{budget_total:,.0f} €")
-
-        # (le reste de ton code inchangé : nombre de clics autorisés, ajout clics, suppression, CSV etc.)
-
-
-        # ---------- 2) Entrées / clics
-        st.subheader("Entrées / clics")
-        col1, col2, col3, col4 = st.columns([1, 1, 1, 0.8])
-        with col1:
-            new_date = st.date_input("Date du clic", value=date.today(), key=date_key)
-        with col2:
-            new_price = st.number_input("Prix (€/MWh)", min_value=0.0, step=1.0, format="%.0f", key=price_key)
-        with col3:
-            new_vol = st.number_input("Volume (MWh)", min_value=0.0, step=5.0, format="%.0f", key=vol_key)
-        with col4:
-            st.markdown("&nbsp;")
-            add_click = st.button("➕ Ajouter ce clic", key=add_btn, use_container_width=True)
-
-        used_clicks = len(clicks)
-        if add_click:
-            if used_clicks >= int(st.session_state[max_key]):
-                st.error(f"Limite atteinte ({int(st.session_state[max_key])} clics).")
-            elif new_vol <= 0 or new_price <= 0:
-                st.warning("Prix et volume doivent être > 0.")
-            else:
-                st.session_state[clicks_key].append(
-                    {"date": new_date, "price": float(new_price), "volume": float(new_vol)}
-                )
-                st.success("Clic ajouté.")
-                for k in (price_key, vol_key):
-                    st.session_state.pop(k, None)
-                st.rerun()
-
-        # ---------- 3) Clics enregistrés + suppression + CSV
-        clicks_df = pd.DataFrame(st.session_state.get(clicks_key, []))
-        display_df = pd.DataFrame(columns=["Date", "Prix (€/MWh)", "Volume (MWh)", "% du total"])
-        if not clicks_df.empty:
-            df = clicks_df.copy()
-            df["date"] = pd.to_datetime(df["date"]).dt.date
-            df["pct_total"] = df["volume"].apply(
-                lambda v: round((v / total_mwh * 100.0), 2) if total_mwh > 0 else 0.0
-            )
-            display_df = df.rename(columns={
-                "date": "Date",
-                "price": "Prix (€/MWh)",
-                "volume": "Volume (MWh)",
-                "pct_total": "% du total",
-            })[["Date", "Prix (€/MWh)", "Volume (MWh)", "% du total"]]
-            display_df.index = range(1, len(display_df) + 1)
-            display_df.index.name = "Clic #"
-
-        st.markdown("### Clics enregistrés")
-        st.dataframe(display_df, width="stretch")
-
-        if not display_df.empty:
-            del_idx = st.selectbox(
-                "Supprimer un clic",
-                options=display_df.index.tolist(),
-                format_func=lambda i: (
-                    f"{i} — {display_df.loc[i, 'Date']} | "
-                    f"{display_df.loc[i, 'Volume (MWh)']} MWh @ "
-                    f"{display_df.loc[i, 'Prix (€/MWh)']} €/MWh"
-                ),
-                key=del_select,
-            )
-            if st.button("🗑️ Supprimer la ligne sélectionnée", key=del_btn):
-                st.session_state[clicks_key].pop(del_idx - 1)
-                st.rerun()
-        else:
-            st.caption("Aucun clic à supprimer pour l’instant.")
-
-        if not display_df.empty:
-            csv_bytes = display_df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                "Télécharger l’historique (CSV)",
-                data=csv_bytes,
-                file_name=f"clics_blocages_{ns}.csv",
-                mime="text/csv",
-                key=dl_btn,
-            )
-
-        # ---------- 4) BUDGETS (les 3 cadrans)
-        # Budget actuel = fixed_mwh * avg_pond (si pas de clic → 0)
-        current_budget = (fixed_mwh * avg_pond) if avg_pond is not None else 0.0
-        # Budget projeté = rest_mwh * cal_price
-        projected_budget = rest_mwh * float(cal_price or 0.0)
-        # Total estimé
-        total_budget = current_budget + projected_budget
-        # Coût unitaire estimé
-        unit_cost = (total_budget / total_mwh) if total_mwh > 0 else None
-
-        st.markdown("### Budget (actuel / projeté / total)")
-        b1, b2, b3, b4 = st.columns([1, 1, 1, 1])
-        b1.metric("Budget fixé", f"{current_budget:,.0f} €".replace(",", " "))
-        b2.metric("Budget restant projeté", f"{projected_budget:,.0f} €".replace(",", " "))
-        b3.metric("Budget total estimé", f"{total_budget:,.0f} €".replace(",", " "))
-        b4.metric("Coût unitaire estimé", f"{unit_cost:.2f} €/MWh" if unit_cost is not None else "—")
-
-        st.caption(
-            f"• Actuel = {fixed_mwh:.0f} MWh × {avg_pond:.2f} €/MWh "
-            f"| • Projets = {rest_mwh:.0f} MWh × {cal_price:.2f} €/MWh"
-            if avg_pond is not None else
-            f"• Projets = {rest_mwh:.0f} MWh × {cal_price:.2f} €/MWh"
+        c5.metric(
+            f"CAL utilisé ({CAL_DATE})",
+            f"{cal_price:.2f} €/MWh" if cal_price is not None else "—",
+            help="Forward utilisé pour estimer le budget restant."
         )
 
-# ======= Appel des trois modules (2026, 2027, 2028) avec un CAL par défaut =======
+        st.progress(min(cov_pct/100.0, 1.0), text=f"Couverture {cov_pct:.1f}%")
+
+        # ---------- (B) BUDGET — carte unique
+        # Budget fixé = fixed_mwh × avg_pond ; Budget restant = rest_mwh × cal_price
+        budget_fixe   = (fixed_mwh * avg_pond) if avg_pond is not None else 0.0
+        budget_restant= rest_mwh * float(cal_price or 0.0)
+        budget_total  = budget_fixe + budget_restant
+        unit_cost     = (budget_total / total_mwh) if total_mwh > 0 else None
+
+        with st.container(border=True):
+            st.markdown("#### Budget (mise à jour auto)")
+            b1, b2, b3, b4 = st.columns([1,1,1,1])
+            b1.metric("Budget fixé", _fmt_eur(budget_fixe))
+            b2.metric("Budget restant projeté", _fmt_eur(budget_restant))
+            b3.metric("Budget total estimé", _fmt_eur(budget_total))
+            b4.metric("Coût unitaire estimé", f"{unit_cost:.2f} €/MWh" if unit_cost is not None else "—")
+
+            st.caption(
+                ("• Fixé = "
+                 f"{fixed_mwh:.0f} MWh × {avg_pond:.2f} €/MWh  |  "
+                 "• Restant = "
+                 f"{rest_mwh:.0f} MWh × {cal_price:.2f} €/MWh")
+                if avg_pond is not None else
+                (f"• Restant = {rest_mwh:.0f} MWh × {cal_price:.2f} €/MWh")
+            )
+
+        # ---------- (C) ACTION — Ajouter un clic (formulaire compact)
+        with st.container(border=True):
+            st.markdown("#### Ajouter un clic")
+            col1, col2, col3, col4 = st.columns([1, 1, 1, 0.8])
+            with col1:
+                new_date = st.date_input("Date", value=date.today(), key=date_key)
+            with col2:
+                new_price = st.number_input("Prix (€/MWh)", min_value=0.0, step=1.0, format="%.2f", key=price_key)
+            with col3:
+                new_vol = st.number_input("Volume (MWh)", min_value=0.0, step=5.0, format="%.0f", key=vol_key)
+            with col4:
+                st.markdown("&nbsp;")
+                add_click = st.button("➕ Ajouter", key=add_btn, use_container_width=True)
+
+            used_clicks = len(clicks)
+            max_clicks = st.session_state[max_key]
+            if add_click:
+                if used_clicks >= int(max_clicks):
+                    st.error(f"Limite atteinte ({int(max_clicks)} clics).")
+                elif new_vol <= 0 or new_price <= 0:
+                    st.warning("Prix et volume doivent être > 0.")
+                else:
+                    st.session_state[clicks_key].append(
+                        {"date": new_date, "price": float(new_price), "volume": float(new_vol)}
+                    )
+                    st.success("Clic ajouté.")
+                    for k in (price_key, vol_key):
+                        st.session_state.pop(k, None)
+                    st.rerun()
+
+            # micro-indication
+            st.caption(f"Clics utilisés : {used_clicks}/{int(max_clicks)}.")
+
+        # ---------- (D) HISTORIQUE — Expander
+        with st.expander("Clics enregistrés", expanded=not df_clicks.empty):
+            if df_clicks.empty:
+                st.caption("Aucun clic pour l’instant.")
+            else:
+                df_disp = df_clicks.copy()
+                df_disp["date"] = pd.to_datetime(df_disp["date"]).dt.date
+                df_disp["% du total"] = df_disp["volume"].apply(
+                    lambda v: round((v / total_mwh * 100.0), 2) if total_mwh > 0 else 0.0
+                )
+                df_disp = df_disp.rename(columns={
+                    "date": "Date",
+                    "price": "Prix (€/MWh)",
+                    "volume": "Volume (MWh)",
+                })[["Date", "Prix (€/MWh)", "Volume (MWh)", "% du total"]]
+                df_disp.index = range(1, len(df_disp) + 1)
+                df_disp.index.name = "Clic #"
+
+                st.dataframe(df_disp, use_container_width=True)
+
+                del_idx = st.selectbox(
+                    "Supprimer un clic",
+                    options=df_disp.index.tolist(),
+                    format_func=lambda i: (
+                        f"{i} — {df_disp.loc[i, 'Date']} | "
+                        f"{df_disp.loc[i, 'Volume (MWh)']} MWh @ "
+                        f"{df_disp.loc[i, 'Prix (€/MWh)']} €/MWh"
+                    ),
+                    key=del_select,
+                )
+                cdel, cdl = st.columns([1,1])
+                with cdel:
+                    if st.button("🗑️ Supprimer la ligne sélectionnée", key=del_btn, use_container_width=True):
+                        st.session_state[clicks_key].pop(del_idx - 1)
+                        st.rerun()
+                with cdl:
+                    csv_bytes = df_disp.to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        "Télécharger l’historique (CSV)",
+                        data=csv_bytes,
+                        file_name=f"clics_blocages_{ns}.csv",
+                        mime="text/csv",
+                        key=dl_btn,
+                        use_container_width=True
+                    )
+
+# ======= Appel des trois modules (2026, 2027, 2028) =======
 render_contract_module("Couverture du contrat 2026", ns="y2026")
 render_contract_module("Couverture du contrat 2027", ns="y2027")
 render_contract_module("Couverture du contrat 2028", ns="y2028")
