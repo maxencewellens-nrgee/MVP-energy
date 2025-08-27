@@ -323,32 +323,53 @@ c3.metric("Total restant", f"{rest_mwh:.0f} MWh")
 c4.metric("Couverture", f"{cov_pct:.1f} %")
 st.progress(min(cov_pct/100.0, 1.0))
 
-# ---------- 2) Entrées client — ajouter un clic
+# ---------- 2) Entrées client — ajouter un clic (version stable avec form)
 st.subheader("Contrat client — entrées / clics")
 
-col1, col2, col3, col4 = st.columns([1, 1, 1, 0.8])
-with col1:
-    new_date = st.date_input("Date du clic", value=date.today(), key="new_click_date")
-with col2:
-    new_price = st.number_input("Prix (€/MWh)", min_value=0.0, step=0.1, value=0.0, key="new_click_price")
-with col3:
-    new_vol = st.number_input("Volume (MWh)", min_value=0.0, step=1.0, value=0.0, key="new_click_volume")
-with col4:
-    st.markdown("&nbsp;")  # espace pour aligner le bouton
-    add_click = st.button("➕ Ajouter ce clic", use_container_width=True)
+with st.form("add_click_form", clear_on_submit=False):
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 0.8])
+    with col1:
+        new_date = st.date_input("Date du clic", value=date.today(), key="new_click_date")
+    with col2:
+        # On passe par un text_input pour gérer les virgules et éviter les états intermédiaires foireux
+        price_str = st.text_input("Prix (€/MWh)", value=st.session_state.get("new_click_price_str", ""), key="new_click_price_str", placeholder="ex: 95,2")
+    with col3:
+        vol_str = st.text_input("Volume (MWh)", value=st.session_state.get("new_click_volume_str", ""), key="new_click_volume_str", placeholder="ex: 50")
+    with col4:
+        st.markdown("&nbsp;")
+        add_click = st.form_submit_button("➕ Ajouter ce clic", use_container_width=True)
 
 if add_click:
-    if new_vol <= 0 or new_price <= 0:
+    # normaliser virgules → points et filtrer les caractères non numériques
+    def _to_float(s):
+        if s is None: return None
+        s = s.strip().replace(",", ".")
+        s = re.sub(r"[^0-9.\-]", "", s)
+        try:
+            return float(s)
+        except:
+            return None
+
+    new_price = _to_float(st.session_state.get("new_click_price_str", ""))
+    new_vol   = _to_float(st.session_state.get("new_click_volume_str", ""))
+
+    if new_price is None or new_vol is None:
+        st.warning("Merci d’entrer des nombres valides pour **Prix** et **Volume**.")
+    elif new_price <= 0 or new_vol <= 0:
         st.warning("Prix et volume doivent être > 0.")
     else:
         st.session_state["contract_clicks"].append(
-            {"date": new_date, "price": float(new_price), "volume": float(new_vol)}
+            {"date": st.session_state.get("new_click_date", date.today()),
+             "price": float(new_price),
+             "volume": float(new_vol)}
         )
         st.success("Clic ajouté.")
-        # ne PAS écrire dans des clés de widgets : on les purge puis on relance
-        for k in ("new_click_price", "new_click_volume"):  # ajoute "new_click_date" si tu veux aussi la vider
-            st.session_state.pop(k, None)
+
+        # vider les champs sans toucher aux clés de widgets numériques ailleurs
+        for k in ("new_click_price_str", "new_click_volume_str"):
+            st.session_state[k] = ""
         st.rerun()
+
 
 # ---------- 3) Historique des clics
 clicks_df = pd.DataFrame(st.session_state["contract_clicks"])
