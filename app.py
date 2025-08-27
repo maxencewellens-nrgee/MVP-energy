@@ -341,6 +341,24 @@ st.progress(min(cov_pct/100.0, 1.0))
 if avg_pond is not None:
     st.caption(f"(Référence) Prix moyen **pondéré** : **{avg_pond:.2f} €/MWh**")
 
+# --- Limite de clics autorisés
+if "contract_max_clicks" not in st.session_state:
+    st.session_state["contract_max_clicks"] = 5  # défaut
+
+st.markdown("### Paramètre : nombre de clics autorisés")
+max_clicks = st.number_input(
+    "Nombre maximum de clics autorisés",
+    min_value=1, max_value=20, step=1,
+    key="contract_max_clicks"
+)
+
+used_clicks = len(st.session_state.get("contract_clicks", []))
+left_clicks = max(0, int(max_clicks) - used_clicks)
+
+cX1, cX2, cX3 = st.columns(3)
+cX1.metric("Clics autorisés", int(max_clicks))
+cX2.metric("Clics utilisés", used_clicks)
+cX3.metric("Clics restants", left_clicks)
 
 # ---------- 2) Entrées client — ajouter un clic
 st.subheader("Contrat client — entrées / clics")
@@ -363,17 +381,22 @@ with col4:
     add_click = st.button("➕ Ajouter ce clic", use_container_width=True)
 
 if add_click:
-    if new_vol <= 0 or new_price <= 0:
+    max_clicks = int(st.session_state.get("contract_max_clicks", 5))
+    used_clicks = len(st.session_state.get("contract_clicks", []))
+
+    if used_clicks >= max_clicks:
+        st.error(f"Limite atteinte ({max_clicks} clics). Supprime un clic ou augmente la limite plus haut.")
+    elif new_vol <= 0 or new_price <= 0:
         st.warning("Prix et volume doivent être > 0.")
     else:
-        st.session_state["contract_clicks"].append(
+        st.session_state.setdefault("contract_clicks", []).append(
             {"date": new_date, "price": float(new_price), "volume": float(new_vol)}
         )
         st.success("Clic ajouté.")
-        # ne PAS écrire dans des clés de widgets : on les purge puis on relance
-        for k in ("new_click_price", "new_click_volume"):  # ajoute "new_click_date" si tu veux aussi la vider
+        for k in ("new_click_price", "new_click_volume"):
             st.session_state.pop(k, None)
         st.rerun()
+
 
 # ---------- 3) Historique des clics (REMPLACEMENT ENTIER, SAFE AU CHARGEMENT)
 clicks = st.session_state.get("contract_clicks", [])
