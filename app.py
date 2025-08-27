@@ -287,8 +287,9 @@ else:
     # ===================== CONTRATS MULTI-MODULES (REMPLACEMENT ENTIER) =====================
 
 def render_contract_module(title: str, ns: str, default_total: float = 200.0, default_max_clicks: int = 5):
-    st.markdown("---")
-    st.subheader(title)
+    # Boîte avec bordure pour délimiter visuellement toute la section
+    with st.container(border=True):
+        st.subheader(title)
 
     # --- clés (toutes uniques par ns)
     total_key  = f"{ns}__total_mwh"
