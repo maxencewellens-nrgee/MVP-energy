@@ -375,33 +375,35 @@ if add_click:
             st.session_state.pop(k, None)
         st.rerun()
 
-# ---------- 3) Historique des clics
-clicks_df = pd.DataFrame(st.session_state["contract_clicks"])
+# ---------- 3) Historique des clics (REMPLACEMENT ENTIER, SAFE AU CHARGEMENT)
+clicks = st.session_state.get("contract_clicks", [])
+clicks_df = pd.DataFrame(clicks)
 
-if clicks_df.empty:
-    st.info("Aucun clic enregistré pour l’instant.")
-else:
+# Prépare un display_df même si vide (évite NameError)
+display_df = pd.DataFrame(columns=["Date", "Prix (€/MWh)", "Volume (MWh)", "% du total"])
+
+if not clicks_df.empty:
     df = clicks_df.copy()
     df["date"] = pd.to_datetime(df["date"]).dt.date
-    df["pct_total"] = df["volume"].apply(lambda v: round((v/total_mwh*100.0), 2) if total_mwh>0 else 0.0)
-
-    # tableau d'affichage
+    df["pct_total"] = df["volume"].apply(
+        lambda v: round((v / total_mwh * 100.0), 2) if total_mwh > 0 else 0.0
+    )
     display_df = df.rename(columns={
         "date": "Date",
         "price": "Prix (€/MWh)",
         "volume": "Volume (MWh)",
-        "pct_total": "% du total"
+        "pct_total": "% du total",
     })[["Date", "Prix (€/MWh)", "Volume (MWh)", "% du total"]]
-    display_df = display_df.copy()
-    display_df.index = range(1, len(display_df)+1)
+    display_df.index = range(1, len(display_df) + 1)
     display_df.index.name = "Clic #"
 
-    st.markdown("### Clics enregistrés")
-    st.dataframe(display_df, use_container_width=True)
+st.markdown("### Clics enregistrés")
+st.dataframe(display_df, width="stretch")  # remplace use_container_width=True
 
-   # --- Suppression d'un clic (safe, sans IndexError)
-if not display_df.empty:
-    # Le tableau a déjà un index 1..N (voir plus haut). On l'utilise directement.
+# --- Suppression d'un clic (affiché seulement si clics dispo)
+if display_df.empty:
+    st.caption("Aucun clic à supprimer pour l’instant.")
+else:
     del_idx = st.selectbox(
         "Supprimer un clic",
         options=display_df.index.tolist(),  # [1..N]
@@ -412,14 +414,18 @@ if not display_df.empty:
         ),
         key="delete_click_selector",
     )
-
     if st.button("🗑️ Supprimer la ligne sélectionnée"):
-        # Dans la liste Python d'origine, l'élément #i est à l'index i-1
-        st.session_state["contract_clicks"].pop(del_idx - 1)
+        st.session_state["contract_clicks"].pop(del_idx - 1)  # liste 0-based
         st.rerun()
 
-    # export CSV
+# --- Export CSV (seulement si non vide)
+if not display_df.empty:
     csv_bytes = display_df.to_csv(index=False).encode("utf-8")
-    st.download_button("Télécharger l’historique (CSV)", data=csv_bytes,
-                       file_name="clics_blocages.csv", mime="text/csv")
+    st.download_button(
+        "Télécharger l’historique (CSV)",
+        data=csv_bytes,
+        file_name="clics_blocages.csv",
+        mime="text/csv",
+    )
+
 # ===================== FIN SECTION CONTRAT — UNIQUE =====================
