@@ -298,8 +298,8 @@ else:
 
     k1, k2, k3 = st.columns(3)
     k1.metric("Moyenne depuis le début visible", f"{overall_avg} €/MWh")
-    k2.metric("Moyenne mois en cours (jusqu’à J−1)", f"{month_avg} €/MWh")
-    k3.metric("Dernier prix accessible (J−1)", f"{last['avg']:.2f} €/MWh")
+    k2.metric("Moyenne mois en cours", f"{month_avg} €/MWh")
+    k3.metric("Dernier prix accessible", f"{last['avg']:.2f} €/MWh")
 
     # CAL FlexyPower (utilise ta fonction fetch_flexypower_cals() définie plus haut)
     try:
