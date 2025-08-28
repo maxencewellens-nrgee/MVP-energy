@@ -482,65 +482,46 @@ def render_year(ns: str, title: str):
         unit_before   = (budget_before / total) if total > 0 else None
 
         # --- APRÈS (on fixe 'extra' au CAL, le reste du restant reste @CAL)
-       # --- Deltas
-delta_unit  = (unit_after - unit_before) if (unit_before is not None and unit_after is not None) else None
-delta_fixed = ( (fixed_avg_after or avg_fixed) - (avg_fixed or 0.0) ) if (fixed_avg_after is not None or avg_fixed is not None) else None
-delta_cov   = (extra/total*100.0) if total > 0 else None
-delta_budg  = budget_after - budget_before
+              # === KPIs (sans "prix moyen du contrat")
+        # Deltas
+        delta_fixed = None
+        if fixed_avg_after is not None and avg_fixed is not None:
+            delta_fixed = fixed_avg_after - avg_fixed  # plus bas = mieux
 
-c1, c2, c3, c4 = st.columns(4)
+        delta_cov  = (extra / total * 100.0) if total > 0 else None
+        delta_budg = budget_after - budget_before     # si tu veux "plus bas = mieux" => inverse
 
-# 1) Prix moyen du contrat — on préfère plus bas => inverse
-with c1:
-    st.metric(
-        "Prix moyen contrat (après clic)",
-        f"{unit_after:.2f} €/MWh" if unit_after is not None else "—",
-        delta=(f"{delta_unit:+.2f} €/MWh" if delta_unit is not None else None),
-        delta_color="inverse",
-        help="Projection: le restant est toujours valorisé au CAL du jour, d’où un delta souvent ~0."
-    )
+        c1, c2, c3 = st.columns(3)
 
-# 2) Prix moyen du fixé — on préfère plus bas => inverse
-with c2:
-    st.metric(
-        "Prix moyen du fixé (après clic)",
-        (f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh")),
-        delta=(f"{delta_fixed:+.2f} €/MWh" if delta_fixed is not None else None),
-        delta_color="inverse",
-        help="Moyenne pondérée sur le volume déjà verrouillé uniquement."
-    )
+        # 1) Prix moyen du fixé — on préfère PLUS BAS => delta_color="inverse"
+        with c1:
+            st.metric(
+                "Prix moyen du fixé (après clic)",
+                (f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None
+                 else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh")),
+                delta=(f"{delta_fixed:+.2f} €/MWh" if delta_fixed is not None else None),
+                delta_color="inverse",
+                help="Moyenne pondérée sur les volumes déjà verrouillés uniquement."
+            )
 
-# 3) Couverture — on préfère plus haut => normal
-with c3:
-    cover_after = (new_fixed_mwh/total*100.0) if total>0 else 0.0
-    st.metric(
-        "Couverture (après clic)",
-        f"{cover_after:.1f} %",
-        delta=(f"{delta_cov:+.1f} pts" if delta_cov is not None else None),
-        delta_color="normal"
-    )
+        # 2) Couverture — on préfère PLUS HAUT => delta_color par défaut ("normal")
+        with c2:
+            cover_after = (new_fixed_mwh / total * 100.0) if total > 0 else 0.0
+            st.metric(
+                "Couverture (après clic)",
+                f"{cover_after:.1f} %",
+                delta=(f"{delta_cov:+.1f} pts" if delta_cov is not None else None),
+                delta_color="normal"
+            )
 
-# 4) Budget total estimé — si tu veux le considérer 'plus bas = mieux', mets inverse
-with c4:
-    st.metric("Budget total estimé (après clic)",_fmt_eur(budget_after),
-        delta=(_fmt_eur(delta_budg) if abs(delta_budg) >= 0.5 else "0 €"),
-        delta_color="inverse")
-
-        # --- Barre horizontale (fixé / clic / restant)
-        seg = pd.DataFrame({"segment": ["Fixé existant", "Nouveau clic", "Restant après"],"mwh":[fixed_mwh, extra,remaining_after]})
-        bar = alt.Chart(seg).mark_bar(height=20).encode(x=alt.X("sum(mwh):Q", stack="zero", title=f"Répartition {title} (MWh) — Total {total:.0f}"),
-        color=alt.Color("segment:N", scale=alt.Scale(
-        domain=["Fixé existant","Nouveau clic","Restant après"],
-        range=["#22c55e","#3b82f6","#9ca3af"])),
-        tooltip=[alt.Tooltip("segment:N"), alt.Tooltip("mwh:Q", format=".0f", title="MWh")]
-        ).properties(width="container")
-        st.altair_chart(bar, use_container_width=True)
-
-        st.caption(
-            "Le budget projeté valorise déjà le **restant** au **CAL du jour** ; "
-            "cliquer aujourd’hui **déplace** du ‘projeté’ vers du ‘fixé’. "
-            "L’impact visible est surtout sur le **prix moyen du fixé** et la **couverture**."
-        )
+        # 3) Budget total estimé — si tu considères qu'un budget plus BAS est mieux => "inverse"
+        with c3:
+            st.metric(
+                "Budget total estimé (après clic)",
+                _fmt_eur(budget_after),
+                delta=(_fmt_eur(delta_budg) if abs(delta_budg) >= 0.5 else "0 €"),
+                delta_color="inverse"
+            )
 
 # --- 3 onglets (on conserve la structure actuelle)
 tabs = st.tabs(["2026", "2027", "2028"])
