@@ -682,8 +682,8 @@ def render_contract_module(title: str, ns: str):
             st.markdown("#### Budget (déjà fixé)")
             c1, c2, c3 = st.columns([1, 1, 1])
             c1.metric("Volume fixé", f"{fixed_mwh:.0f} MWh")
-            c2.metric("Budget fixé", _fmt_eur(total_cost_fixed))
-            c3.metric("Prix moyen fixé", f"{avg_fixed_mwh:.2f} €/MWh" if avg_fixed_mwh is not None else "—")
+            c2.metric("Prix moyen fixé", f"{avg_fixed_mwh:.2f} €/MWh" if avg_fixed_mwh is not None else "—")
+            c3.metric("Budget fixé", _fmt_eur(total_cost_fixed))
 
             if avg_fixed_mwh is not None:
                 st.caption(
