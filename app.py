@@ -669,23 +669,27 @@ def render_contract_module(title: str, ns: str):
                   help="Forward utilisé pour estimer le budget restant.")
         st.progress(min(cov_pct/100.0, 1.0), text=f"Couverture {cov_pct:.1f}%")
 
-        # --- (B) Budget (FIXÉ uniquement — + prix moyen en €/kWh)
-        budget_fixe = (fixed_mwh * (avg_pond or 0.0)) if fixed_mwh > 0 else 0.0
-        avg_pond_kwh = (avg_pond / 1000.0) if avg_pond is not None else None  # conversion MWh -> kWh
+                # --- (B) Budget (FIXÉ uniquement — volume, budget, prix moyen €/kWh)
+        # Calcule *strictement* sur les clics déjà fixés
+        if not df_clicks.empty and fixed_mwh > 0:
+            total_cost_fixed = float((df_clicks["price"] * df_clicks["volume"]).sum())   # € = (€/MWh * MWh)
+            avg_fixed_mwh    = float(total_cost_fixed / fixed_mwh)                      # €/MWh
+            avg_fixed_kwh    = avg_fixed_mwh / 1000.0                                   # €/kWh
+        else:
+            total_cost_fixed = 0.0
+            avg_fixed_mwh    = None
+            avg_fixed_kwh    = None
 
         with st.container(border=True):
             st.markdown("#### Budget (déjà fixé)")
             b1, b2, b3 = st.columns([1, 1, 1])
-            b1.metric("Volume fixé", f"{fixed_mwh:.0f} MWh")
-            b2.metric("Budget fixé", _fmt_eur(budget_fixe))
-            b3.metric(
-                "Prix moyen fixé",
-                f"{avg_pond_kwh:.3f} €/kWh" if avg_pond_kwh is not None else "—",
-                help="Prix moyen pondéré des clics converti en €/kWh (€/MWh ÷ 1000)."
-            )
 
-            if avg_pond is not None:
-                st.caption(f"Équivaut à **{avg_pond:.2f} €/MWh** (= {avg_pond_kwh:.3f} €/kWh).")
+            b1.metric("Volume fixé", f"{fixed_mwh:.0f} MWh")
+            b2.metric("Prix moyen fixé",(f"{avg_fixed_kwh:.3f} €/kWh" if avg_fixed_kwh is not None else "—"),help="Prix moyen pondéré des clics converti en €/kWh (€/MWh ÷ 1000).")
+            b3.metric("Budget fixé", _fmt_eur(total_cost_fixed))
+
+            if avg_fixed_mwh is not None:
+                st.caption(f"Équivaut à **{avg_fixed_mwh:.2f} €/MWh** (= {avg_fixed_kwh:.3f} €/kWh).")
             else:
                 st.caption("Aucun clic enregistré pour l’instant (prix moyen du fixé indisponible).")
 
