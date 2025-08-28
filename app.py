@@ -57,17 +57,26 @@ def fetch_daily(start_date: str, end_inclusive_date: str) -> pd.DataFrame:
 
 def decision_from_last(daily: pd.DataFrame, lookback_days: int = 180) -> dict:
     """
-    Décision ancrée sur le dernier prix (J-1) avec garde-fous par quantiles (P10/P30/P70)
-    calculés sur une fenêtre lookback_days (par défaut 180).
+    Décision basée sur le dernier prix et des quantiles P10/P30/P70
+    calculés sur une fenêtre de lookback. Robuste aux types de dates.
     """
     if daily.empty:
         return {"reco":"—","raison":"Pas de données.","last":None,"p10":None,"p30":None,"p70":None}
-    last_price = float(daily.iloc[-1]["avg"])
-    ref_end = pd.to_datetime(daily["date"].max())
-    ref_start = (ref_end - pd.Timedelta(days=lookback_days)).date()
-    ref = daily[daily["date"] >= ref_start]
+
+    df = daily.copy()
+    # 🔧 Standardise: s'assure que 'date' est bien datetime64[ns]
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values("date")
+
+    last_price = float(df.iloc[-1]["avg"])
+    ref_end = df["date"].max()                           # Timestamp
+    ref_start = ref_end - pd.Timedelta(days=lookback_days)  # Timestamp
+
+    # Filtre sur la fenêtre
+    ref = df[df["date"] >= ref_start]
     if len(ref) < 30:
-        ref = daily
+        ref = df
+
     p10 = ref["avg"].quantile(0.10)
     p30 = ref["avg"].quantile(0.30)
     p70 = ref["avg"].quantile(0.70)
