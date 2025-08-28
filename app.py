@@ -496,7 +496,7 @@ def render_year(ns: str, title: str):
         c1, c2, c3 = st.columns(3)
        
         with c1:
-            st.metric("Prix moyen du fixé (après clic)",
+            st.metric("Prix d'achat moyen (après clic)",
                       f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh"),
                       delta=(f"{( (fixed_avg_after or avg_fixed) - (avg_fixed or 0) ):+.2f} €/MWh" if fixed_avg_after is not None and avg_fixed is not None else None))
         with c2:
