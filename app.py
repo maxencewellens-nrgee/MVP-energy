@@ -669,27 +669,20 @@ def render_contract_module(title: str, ns: str):
                   help="Forward utilisé pour estimer le budget restant.")
         st.progress(min(cov_pct/100.0, 1.0), text=f"Couverture {cov_pct:.1f}%")
 
-        # --- (B) Budget (carte unique)
-        budget_fixe    = (fixed_mwh * avg_pond) if avg_pond is not None else 0.0
-        budget_restant = rest_mwh * float(cal_price or 0.0)
-        budget_total   = budget_fixe + budget_restant
-        unit_cost      = (budget_total / total_mwh) if total_mwh > 0 else None
+        # --- (B) Budget (FIXÉ uniquement — pas de projeté ici)
+        # (on ne montre plus ni budget restant, ni budget total, ni coût unitaire estimé)
+        budget_fixe = (fixed_mwh * (avg_pond or 0.0)) if fixed_mwh > 0 else 0.0
 
         with st.container(border=True):
-            st.markdown("#### Budget")
-            b1, b2, b3, b4 = st.columns([1,1,1,1])
-            b1.metric("Budget fixé", _fmt_eur(budget_fixe))
-            b2.metric("Budget restant projeté", _fmt_eur(budget_restant))
-            b3.metric("Budget total estimé", _fmt_eur(budget_total))
-            b4.metric("Coût unitaire estimé", f"{unit_cost:.2f} €/MWh" if unit_cost is not None else "—")
+            st.markdown("#### Budget (déjà fixé)")
+            b1, b2 = st.columns([1, 1])
+            b1.metric("Volume fixé", f"{fixed_mwh:.0f} MWh")
+            b2.metric("Budget fixé", _fmt_eur(budget_fixe))
 
             if avg_pond is not None:
-                st.caption(
-                    f"• Fixé = {fixed_mwh:.0f} MWh × {avg_pond:.2f} €/MWh  |  "
-                    f"• Restant = {rest_mwh:.0f} MWh × {cal_price:.2f} €/MWh"
-                )
+                st.caption(f"Prix moyen pondéré du fixé : **{avg_pond:.2f} €/MWh**.")
             else:
-                st.caption(f"• Restant = {rest_mwh:.0f} MWh × {cal_price:.2f} €/MWh")
+                st.caption("Aucun clic enregistré pour l’instant (prix moyen du fixé indisponible).")
 
         # --- (C) Ajouter un clic
         with st.container(border=True):
