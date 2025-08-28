@@ -12,7 +12,7 @@ import html as ihtml
 import unicodedata
 import urllib.parse 
 
-# ----------------------------- Config
+# ----------------------------- Configuration
 st.set_page_config(page_title="MVP Énergie — BE Day-Ahead", layout="wide")
 st.title("Gestion contrat futur, Recommandation & Prise de décision")
 
