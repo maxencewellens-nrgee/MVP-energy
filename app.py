@@ -492,24 +492,34 @@ def render_year(ns: str, title: str):
         # Prix moyen du FIXÉ après clic
         fixed_avg_after = ((avg_fixed or 0.0) * fixed_mwh + cal_now * extra) / new_fixed_mwh if new_fixed_mwh > 0 else None
 
-        # === KPIs
+        # === KPIs (autonomes) =====================================================
+
+# Recalculs sûrs (au cas où des variables amont n'existent plus ici)
+new_fixed_mwh   = fixed_mwh + extra
+fixed_cost_avant = (avg_fixed or 0.0) * fixed_mwh
+fixed_avg_after  = ((fixed_cost_avant + cal_now * extra) / new_fixed_mwh) if new_fixed_mwh > 0 else None
+
+remaining_after = max(0.0, total - new_fixed_mwh)
+# Budget projeté cohérent avec ta logique (restant valorisé au CAL du jour)
+budget_before = fixed_cost_avant + cal_now * rest_mwh
+budget_after  = (fixed_cost_avant + cal_now * extra) + cal_now * remaining_after
+
+# 1) Prix d'achat moyen (fixé) — vert si ça baisse
 c1, c2, c3 = st.columns(3)
 
-# 1) Prix d'achat moyen — vert si ça BAISSE
 with c1:
     delta_price = None
     if fixed_avg_after is not None and avg_fixed is not None:
         delta_price = fixed_avg_after - avg_fixed  # baisse => vert (inverse)
-
     st.metric(
         "Prix d'achat moyen (après clic)",
         f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None
         else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh"),
         delta=(f"{delta_price:+.2f} €/MWh" if delta_price is not None else None),
-        delta_color="inverse",  # inverse = vert si négatif
+        delta_color="inverse",
     )
 
-# 2) Couverture — vert si ça MONTE (normal)
+# 2) Couverture — vert si ça monte
 with c2:
     cover_after = (new_fixed_mwh / total * 100.0) if total > 0 else 0.0
     delta_cov = (extra / total * 100.0) if total > 0 else None
@@ -520,14 +530,11 @@ with c2:
         delta_color="normal",
     )
 
-# 3) Budget total estimé — PAS de delta
+# 3) Budget total estimé — pas de delta
 with c3:
-    st.metric(
-        "Budget total estimé (après clic)",
-        _fmt_eur(budget_after)
-    )
+    st.metric("Budget total estimé (après clic)", _fmt_eur(budget_after))
 
-# --- Barre horizontale (fixé / clic / restant) — À L'EXTÉRIEUR des colonnes !
+# --- Barre horizontale (fixé / clic / restant) ----------------------------
 seg = pd.DataFrame({
     "segment": ["Fixé existant", "Nouveau clic", "Restant après"],
     "mwh":     [fixed_mwh,       extra,          remaining_after]
