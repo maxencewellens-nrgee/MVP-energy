@@ -1,6 +1,4 @@
-
-
-# app.py — MVP Énergie (BE Day-Ahead + Contrat + FlexyPower CAL)
+# app.py — MVP Énergie (BE Day-Ahead + Contrat + FlexyPower CAL) — version épurée UX/UI
 import streamlit as st
 import pandas as pd
 import altair as alt
@@ -11,11 +9,10 @@ from dateutil.relativedelta import relativedelta
 import pytz
 import html as ihtml
 import unicodedata
-import urllib.parse 
-
+import urllib.parse  # ⚠️ corrige l’espace insécable après 'parse'
 # ----------------------------- Configuration
 st.set_page_config(page_title="MVP Énergie — BE Day-Ahead", layout="wide")
-st.title("Gérer mes contrats; recommandations & prise de décision")
+st.title("Gérer mes contrats ; recommandations & prise de décision")
 
 # ----------------------------- Secrets / Token
 TOKEN = st.secrets.get("ENTSOE_TOKEN", "")
@@ -29,11 +26,21 @@ tz_utc = pytz.UTC
 tz_be  = pytz.timezone("Europe/Brussels")
 client = EntsoePandasClient(api_key=TOKEN)
 
-# ----------------------------- Helpers
+# ----------------------------- Helpers format (unifiés)
+def eur(amount: float, dec: int = 0) -> str:
+    s = f"{amount:,.{dec}f}".replace(",", " ")
+    return f"{s} €"
+
+def price_eur_mwh(p: float) -> str:
+    return f"{p:,.2f} €/MWh".replace(",", " ")
+
+def mwh(v: float, dec: int = 0) -> str:
+    return f"{v:,.{dec}f} MWh".replace(",", " ")
+
 def fmt_be(d) -> str:
-    """Format JJ/MM/AAAA."""
     return pd.to_datetime(d).strftime("%d/%m/%Y")
 
+# ----------------------------- Data market
 @st.cache_data(ttl=24*3600)
 def fetch_daily(start_date: str, end_inclusive_date: str) -> pd.DataFrame:
     """
@@ -58,22 +65,19 @@ def fetch_daily(start_date: str, end_inclusive_date: str) -> pd.DataFrame:
 
 def decision_from_last(daily: pd.DataFrame, lookback_days: int = 180) -> dict:
     """
-    Décision basée sur le dernier prix et des quantiles P10/P30/P70
-    calculés sur une fenêtre de lookback. Robuste aux types de dates.
+    Décision basée sur le dernier prix et quantiles P10/P30/P70 sur fenêtre de lookback.
     """
     if daily.empty:
         return {"reco":"—","raison":"Pas de données.","last":None,"p10":None,"p30":None,"p70":None}
 
     df = daily.copy()
-    # 🔧 Standardise: s'assure que 'date' est bien datetime64[ns]
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date")
 
     last_price = float(df.iloc[-1]["avg"])
-    ref_end = df["date"].max()                           # Timestamp
-    ref_start = ref_end - pd.Timedelta(days=lookback_days)  # Timestamp
+    ref_end = df["date"].max()
+    ref_start = ref_end - pd.Timedelta(days=lookback_days)
 
-    # Filtre sur la fenêtre
     ref = df[df["date"] >= ref_start]
     if len(ref) < 30:
         ref = df
@@ -94,12 +98,7 @@ def decision_from_last(daily: pd.DataFrame, lookback_days: int = 180) -> dict:
     return {"reco":"ATTENDRE","raison":f"Dernier prix {last_price:.2f} entre P30 {p30:.2f} et P70 {p70:.2f} : pas de signal fort.",
             "last":round(last_price,2),"p10":round(p10,2),"p30":round(p30,2),"p70":round(p70,2)}
 
-@st.cache_data(ttl=60*30)
-
-@st.cache_data(ttl=60*30)
-
-# --- FlexyPower: robuste (normal -> fallback via r.jina.ai -> read_html) ---
-
+# --- FlexyPower: robuste (normal -> fallback via r.jina.ai -> read_html)
 @st.cache_data(ttl=60*30)
 def fetch_flexypower_cals(url: str = "https://flexypower.eu/prix-de-lenergie/", debug: bool = False) -> dict:
     """
@@ -113,7 +112,6 @@ def fetch_flexypower_cals(url: str = "https://flexypower.eu/prix-de-lenergie/", 
 
     def _parse_block(text: str) -> dict:
         vals = {"CAL-26": None, "CAL-27": None, "CAL-28": None, "date": None}
-        # isole bloc Electricite si possible
         m_elec = re.search(r"Electricite.*?(?=Gaz naturel|<h2|</section>|$)", text, flags=re.I)
         block = m_elec.group(0) if m_elec else text
         dm = re.search(r"\b(\d{2}/\d{2}/\d{4})\b", block)
@@ -123,14 +121,13 @@ def fetch_flexypower_cals(url: str = "https://flexypower.eu/prix-de-lenergie/", 
             if m:
                 try:
                     vals[f"CAL-{yy}"] = float(m.group(1).replace(",", "."))
-                except: pass
+                except: 
+                    pass
         return vals
 
-    # 1) tentative HTML direct
+    # 1) direct
     try:
-        r = requests.get(url, headers={
-            "User-Agent":"Mozilla/5.0", "Accept-Language":"fr-FR,fr;q=0.9,en;q=0.8"
-        }, timeout=20)
+        r = requests.get(url, headers={"User-Agent":"Mozilla/5.0","Accept-Language":"fr-FR,fr;q=0.9,en;q=0.8"}, timeout=20)
         r.raise_for_status()
         vals = _parse_block(_normalize(r.text))
         if any(vals[k] is not None for k in ("CAL-26","CAL-27","CAL-28")):
@@ -139,7 +136,7 @@ def fetch_flexypower_cals(url: str = "https://flexypower.eu/prix-de-lenergie/", 
     except Exception as e:
         if debug: st.write("Flexy direct FAIL:", e)
 
-    # 2) fallback proxy texte (souvent ça contourne JS/anti-bot)
+    # 2) proxy texte
     try:
         pr = urllib.parse.urlparse(url)
         proxy_url = f"https://r.jina.ai/http://{pr.netloc}{pr.path}"
@@ -152,11 +149,10 @@ def fetch_flexypower_cals(url: str = "https://flexypower.eu/prix-de-lenergie/", 
     except Exception as e:
         if debug: st.write("Flexy proxy FAIL:", e)
 
-    # 3) dernier recours: read_html sur la page d’origine
+    # 3) read_html
     try:
         tables = pd.read_html(url)
         for df in tables:
-            cols = [str(c).upper() for c in df.columns]
             prod_col = df.columns[0]
             price_col = df.columns[1] if len(df.columns)>1 else df.columns[0]
             for yy in ("26","27","28"):
@@ -168,7 +164,6 @@ def fetch_flexypower_cals(url: str = "https://flexypower.eu/prix-de-lenergie/", 
                         outv = float(rawv)
                     except:
                         outv = None
-                    # on construit un résultat incrémental
                     if 'vals' not in locals():
                         vals = {"CAL-26": None, "CAL-27": None, "CAL-28": None, "date": None}
                     vals[f"CAL-{yy}"] = outv
@@ -178,30 +173,26 @@ def fetch_flexypower_cals(url: str = "https://flexypower.eu/prix-de-lenergie/", 
     except Exception as e:
         if debug: st.write("Flexy read_html FAIL:", e)
 
-    # échec total
     return {"CAL-26": None, "CAL-27": None, "CAL-28": None, "date": None}
-
-
 
 # ----------------------------- Marché : bornes automatiques (sans UI)
 today_be = datetime.now(tz_be).date()
 END_INCLUSIVE = str(today_be - timedelta(days=1))   # J-1
-START_HISTORY = "2025-01-01"                        # élargis si tu veux plus long
-LOOKBACK_DAYS = 180                                 # pour les quantiles (non visible côté client)
+START_HISTORY = "2025-01-01"
+LOOKBACK_DAYS = 180
 
-# Variables utilisées plus bas (pas d’UI publique)
 start_input = START_HISTORY
 end_input   = END_INCLUSIVE
 lookback    = LOOKBACK_DAYS
-run_market  = False  # plus de bouton; chargement auto géré dans le bloc suivant
 
 # ----------------------------- Marché : chargement & affichage (AUTO)
 def load_market(start_date: str, end_date: str):
+    # skeleton loader : KPI placeholders + chart container
     with st.spinner("Récupération ENTSO-E (par mois)…"):
         data = fetch_daily(start_date, end_date)
     return data
 
-# 1) Auto-chargement au premier affichage (et à chaque redeploy/cache clear)
+# init unique
 if "market_daily" not in st.session_state:
     try:
         st.session_state["market_daily"] = load_market(start_input, end_input)
@@ -210,119 +201,98 @@ if "market_daily" not in st.session_state:
         st.error(f"Erreur : {e}")
         st.stop()
 
-# 2) Rendu permanent (toujours visible)
 daily = st.session_state.get("market_daily", pd.DataFrame())
 if daily.empty:
     st.error("Aucune donnée sur l'intervalle demandé.")
 else:
-    # Titre demandé
     st.subheader("Historique prix marché électricité")
 
 # ===================== Graphique interactif BE spot =====================
-
 mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
 
-# --- Préparation des données
 vis = daily.copy()
 vis["date"] = pd.to_datetime(vis["date"])
 vis = vis.sort_values("date")
-vis["sma"] = vis["avg"].rolling(
-    window=int(mm_window),
-    min_periods=max(5, int(mm_window)//3)
-).mean()
+vis["sma"] = vis["avg"].rolling(window=int(mm_window), min_periods=max(5, int(mm_window)//3)).mean()
 
 # Champs formatés FR pour affichage
-vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")                      # ex : 21/05/25
-vis["spot_str"] = vis["avg"].apply(lambda v: f"{v:.2f}".replace(".", ",") + "€")  # ex : 99,75€
+vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")
+vis["spot_str"] = vis["avg"].apply(lambda v: f"{v:.2f}".replace(".", ",") + "€")
 
-# --- Sélection souris : suit le mouvement, ne se vide jamais
-hover = alt.selection_point(
-    fields=["date"],
-    nearest=True,
-    on="mousemove",   # pas besoin de viser la boule
-    empty="none",
-    clear=False       # reste affiché quand on sort du graphe
-)
+# Sélection souris persistante
+hover = alt.selection_point(fields=["date"], nearest=True, on="mousemove", empty="none", clear=False)
 
 base = alt.Chart(vis).encode(
-    x=alt.X("date:T", title="Date")
+    x=alt.X("date:T", title="Date", axis=alt.Axis(format="%b %y"))  # ✅ axe mensuel
 )
 
-# Courbe spot (sans tooltip)
+# Courbe spot
 spot_line = base.mark_line(strokeWidth=1.5, color="#1f2937").encode(
     y=alt.Y("avg:Q", title="€/MWh"),
     tooltip=[]
-)
+).transform_calculate(serie='"Spot"')
 
-# Courbe moyenne mobile (sans tooltip)
-sma_line = base.transform_filter("datum.sma != null").mark_line(
-    strokeWidth=3, color="#22c55e"
-).encode(
+# Courbe moyenne mobile
+sma_line = base.transform_filter("datum.sma != null").mark_line(strokeWidth=3, color="#22c55e").encode(
     y="sma:Q",
     tooltip=[]
-)
+).transform_calculate(serie='"Moyenne mobile"')
 
-# Points invisibles pour accrocher la sélection
-points = base.mark_point(opacity=0).encode(
-    y="avg:Q",
-    tooltip=[]
-).add_params(hover)
+# Points invisibles + sélection
+points = base.mark_point(opacity=0).encode(y="avg:Q").add_params(hover)
 
-# Point visible au survol
-hover_point = base.mark_circle(size=60, color="#1f2937").encode(
-    y="avg:Q",
-    tooltip=[]
-).transform_filter(hover)
-
-# Règle verticale — réactive le "cadran" (tooltip)
+# Point visible au survol + règle verticale + labels
+hover_point = base.mark_circle(size=60, color="#1f2937").encode(y="avg:Q").transform_filter(hover)
 v_rule = base.mark_rule(color="#9ca3af").encode(
-    tooltip=[
-        alt.Tooltip("date_str:N", title="Date"),
-        alt.Tooltip("spot_str:N", title="Spot")
-    ]
+    tooltip=[alt.Tooltip("date_str:N", title="Date"),
+             alt.Tooltip("spot_str:N", title="Spot")]
 ).transform_filter(hover)
 
-# Labels persistants (avec halo blanc + décalage pour ne pas coller à la boule)
-label_price_halo = base.mark_text(
-    dx=14, dy=-16, align="left", fontSize=12, fontWeight="bold",
-    stroke="white", strokeWidth=5, opacity=1
-).encode(
-    y="avg:Q",
-    text="spot_str:N"
+label_price_halo = base.mark_text(dx=14, dy=-16, align="left", fontSize=12, fontWeight="bold",
+                                  stroke="white", strokeWidth=5, opacity=1).encode(
+    y="avg:Q", text="spot_str:N"
+).transform_filter(hover)
+label_price = base.mark_text(dx=14, dy=-16, align="left", fontSize=12, fontWeight="bold",
+                             color="#111827", opacity=1).encode(
+    y="avg:Q", text="spot_str:N"
+).transform_filter(hover)
+label_date_halo = base.mark_text(dx=14, dy=4, align="left", fontSize=11,
+                                 stroke="white", strokeWidth=5, opacity=1).encode(
+    y="avg:Q", text="date_str:N"
+).transform_filter(hover)
+label_date = base.mark_text(dx=14, dy=4, align="left", fontSize=11, color="#374151", opacity=1).encode(
+    y="avg:Q", text="date_str:N"
 ).transform_filter(hover)
 
-label_price = base.mark_text(
-    dx=14, dy=-16, align="left", fontSize=12, fontWeight="bold",
-    color="#111827", opacity=1
-).encode(
-    y="avg:Q",
-    text="spot_str:N"
-).transform_filter(hover)
-
-label_date_halo = base.mark_text(
-    dx=14, dy=4, align="left", fontSize=11,
-    stroke="white", strokeWidth=5, opacity=1
-).encode(
-    y="avg:Q",
-    text="date_str:N"
-).transform_filter(hover)
-
-label_date = base.mark_text(
-    dx=14, dy=4, align="left", fontSize=11, color="#374151", opacity=1
-).encode(
-    y="avg:Q",
-    text="date_str:N"
-).transform_filter(hover)
+# Légende cliquable (simple)
+legend_sel = alt.selection_point(fields=['serie'], bind='legend')
+layer_lines = alt.layer(spot_line, sma_line).add_params(legend_sel).transform_filter(legend_sel)
 
 chart = alt.layer(
-    spot_line, sma_line, points, v_rule, hover_point,
-    label_price_halo, label_price,
-    label_date_halo, label_date
-).properties(
-    height=420, width="container"
-).interactive()
+    layer_lines, points, v_rule, hover_point,
+    label_price_halo, label_price, label_date_halo, label_date
+).properties(height=420, width="container").interactive()
 
 st.altair_chart(chart, use_container_width=True)
+
+# --- Bandeau "état des données"
+last_visible_date = vis["date"].max()
+st.caption(f"Dernière donnée spot : {fmt_be(last_visible_date)} • Fuseau : Europe/Brussels")
+
+# ----------------------------- Carte Décision du jour (quantiles)
+if not daily.empty:
+    dec = decision_from_last(daily, LOOKBACK_DAYS)
+    with st.container(border=True):
+        st.markdown("### Décision du jour")
+        c1, c2 = st.columns([1.2, 2])
+        with c1:
+            st.metric("Recommandation", dec["reco"])
+            st.metric("Dernier spot", price_eur_mwh(dec["last"]) if dec["last"] is not None else "—")
+        with c2:
+            st.write(dec["raison"])
+            st.caption(f"Références : P10 {price_eur_mwh(dec['p10']) if dec['p10'] is not None else '—'} • "
+                       f"P30 {price_eur_mwh(dec['p30']) if dec['p30'] is not None else '—'} • "
+                       f"P70 {price_eur_mwh(dec['p70']) if dec['p70'] is not None else '—'}")
 
 # ----------------------------- Synthèse (unique)
 st.subheader("Synthèse Prix Spot et Forward")
@@ -344,29 +314,39 @@ else:
     month_avg = round(daily_syn.loc[mask_month, "avg"].mean(), 2)
 
     k1, k2, k3 = st.columns(3)
-    k1.metric("Moyenne depuis le début visible", f"{overall_avg} €/MWh")
-    k2.metric("Moyenne mois en cours", f"{month_avg} €/MWh")
-    k3.metric("Dernier prix accessible", f"{last['avg']:.2f} €/MWh")
+    k1.metric("Moyenne depuis le début visible", price_eur_mwh(overall_avg))
+    k2.metric("Moyenne mois en cours",           price_eur_mwh(month_avg))
+    k3.metric("Dernier prix accessible",         price_eur_mwh(last['avg']))
 
-    # CAL FlexyPower (utilise ta fonction fetch_flexypower_cals() définie plus haut)
-    try:
-        cal = fetch_flexypower_cals()
-        cal_date = cal.get("date") or "—"
-        f1, f2, f3 = st.columns(3)
-        f1.metric(f"CAL-26 (élec) – {cal_date}",
-                  f"{cal.get('CAL-26'):.2f} €/MWh" if cal.get('CAL-26') is not None else "—")
-        f2.metric(f"CAL-27 (élec) – {cal_date}",
-                  f"{cal.get('CAL-27'):.2f} €/MWh" if cal.get('CAL-27') is not None else "—")
-        f3.metric(f"CAL-28 (élec) – {cal_date}",
-                  f"{cal.get('CAL-28'):.2f} €/MWh" if cal.get('CAL-28') is not None else "—")
-    except Exception as e:
-        st.warning(f"CAL FlexyPower indisponible : {e}")
+    # --- CAL FlexyPower (source unique + fallback) → stockés en session pour tout le reste
+    def ensure_cal_used():
+        cal_used = st.session_state.get("CAL_USED")
+        cal_date = st.session_state.get("CAL_DATE")
+        if not cal_used:
+            try:
+                cal = fetch_flexypower_cals()
+            except Exception:
+                cal = {"CAL-26": None, "CAL-27": None, "CAL-28": None, "date": None}
+            fallback = {"CAL-26": 82.61, "CAL-27": 77.82, "CAL-28": 74.38}
+            cal_used = {
+                "y2026": float(cal.get("CAL-26") or fallback["CAL-26"]),
+                "y2027": float(cal.get("CAL-27") or fallback["CAL-27"]),
+                "y2028": float(cal.get("CAL-28") or fallback["CAL-28"]),
+            }
+            cal_date = cal.get("date") or pd.Timestamp.today().strftime("%d/%m/%Y")
+            st.session_state["CAL_USED"] = cal_used
+            st.session_state["CAL_DATE"] = cal_date
+        return cal_used, cal_date
+
+    CAL_USED, CAL_DATE = ensure_cal_used()
+
+    f1, f2, f3 = st.columns(3)
+    f1.metric(f"CAL-26 (élec) – {CAL_DATE}", price_eur_mwh(CAL_USED['y2026']))
+    f2.metric(f"CAL-27 (élec) – {CAL_DATE}", price_eur_mwh(CAL_USED['y2027']))
+    f3.metric(f"CAL-28 (élec) – {CAL_DATE}", price_eur_mwh(CAL_USED['y2028']))
 
 # ===================== RÉCAP CONTRATS PASSÉS (bandes horizontales) =====================
 st.subheader("Contrats passés — récapitulatif 2024 / 2025")
-
-def _fmt_eur(val, dec=0):
-    return f"{val:,.{dec}f} €".replace(",", " ")
 
 def _get(ns):
     vol   = float(st.session_state.get(f"{ns}__fixed_volume", 0.0))
@@ -374,60 +354,39 @@ def _get(ns):
     budget = vol * prix
     return vol, prix, budget
 
-# ----- Bande 2024
+# 2024
 vol24, px24, bud24 = _get("y2024")
 with st.container(border=True):
     st.markdown("**Récap contrat 2024**")
+    if vol24 <= 0 or px24 <= 0:
+        st.info("Aucun contrat saisi pour 2024 — renseignez Volume & Prix dans la barre latérale.")
     c1, c2, c3 = st.columns([1,1,1])
-    with c1: st.metric("Volume", f"{vol24:.0f} MWh")
-    with c2: st.metric("Prix", f"{px24:.2f} €/MWh")
-    with c3: st.metric("Budget total", _fmt_eur(bud24))
-    st.caption(f"Calcul : {vol24:.0f} MWh × {px24:.2f} €/MWh = {_fmt_eur(bud24)}")
+    with c1: st.metric("Volume", mwh(vol24, 0))
+    with c2: st.metric("Prix", price_eur_mwh(px24) if px24>0 else "—")
+    with c3: st.metric("Budget total", eur(bud24))
+    st.caption(f"Calcul : {mwh(vol24,0)} × {price_eur_mwh(px24) if px24>0 else '—'} = {eur(bud24)}")
 
-# ----- Bande 2025
+# 2025
 vol25, px25, bud25 = _get("y2025")
 with st.container(border=True):
     st.markdown("**Récap contrat 2025**")
+    if vol25 <= 0 or px25 <= 0:
+        st.info("Aucun contrat saisi pour 2025 — renseignez Volume & Prix dans la barre latérale.")
     c1, c2, c3 = st.columns([1,1,1])
-    with c1: st.metric("Volume", f"{vol25:.0f} MWh")
-    with c2: st.metric("Prix", f"{px25:.2f} €/MWh")
-    with c3: st.metric("Budget total", _fmt_eur(bud25))
-    st.caption(f"Calcul : {vol25:.0f} MWh × {px25:.2f} €/MWh = {_fmt_eur(bud25)}")
-# ===================== FIN =====================
+    with c1: st.metric("Volume", mwh(vol25, 0))
+    with c2: st.metric("Prix", price_eur_mwh(px25) if px25>0 else "—")
+    with c3: st.metric("Budget total", eur(bud25))
+    st.caption(f"Calcul : {mwh(vol25,0)} × {price_eur_mwh(px25) if px25>0 else '—'} = {eur(bud25)}")
 
 # ===================== SIMULATION PAR MWh (2026 / 2027 / 2028) =====================
-st.subheader("Simuler un clic aujourd’hui (en MWh, au CAL du jour)")
+st.subheader("Simuler une fixation aujourd’hui (en MWh, au CAL du jour)")
 
-# --- 0) Assurer les CAL du jour (avec fallback pour éviter les 0)
-def ensure_cal_used():
-    cal_used = st.session_state.get("CAL_USED")
-    cal_date = st.session_state.get("CAL_DATE")
-    if not cal_used:
-        try:
-            cal = fetch_flexypower_cals()  # {'CAL-26': float|None, 'CAL-27':..., 'CAL-28':..., 'date': str|None}
-        except Exception:
-            cal = {"CAL-26": None, "CAL-27": None, "CAL-28": None, "date": None}
-        fallback = {"CAL-26": 82.61, "CAL-27": 77.82, "CAL-28": 74.38}
-        cal_used = {
-            "y2026": float(cal.get("CAL-26") or fallback["CAL-26"]),
-            "y2027": float(cal.get("CAL-27") or fallback["CAL-27"]),
-            "y2028": float(cal.get("CAL-28") or fallback["CAL-28"]),
-        }
-        cal_date = cal.get("date") or pd.Timestamp.today().strftime("%d/%m/%Y")
-        st.session_state["CAL_USED"] = cal_used
-        st.session_state["CAL_DATE"] = cal_date
-    return cal_used, cal_date
-
-CAL_USED, CAL_DATE = ensure_cal_used()
-
-# --- 1) Utilitaires
-def _fmt_eur(x, dec=0):
-    return f"{x:,.{dec}f} €".replace(",", " ")
+CAL_USED = st.session_state.get("CAL_USED", {"y2026": 82.61, "y2027": 77.82, "y2028": 74.38})
+CAL_DATE = st.session_state.get("CAL_DATE", pd.Timestamp.today().strftime("%d/%m/%Y"))
 
 def _year_state(ns: str):
     """
     total (MWh), fixed_mwh, avg_fixed (€/MWh), rest_mwh, cal_now (€/MWh).
-    Lit st.session_state[{ns}__total_mwh] et {ns}__clicks.
     """
     total = float(st.session_state.get(f"{ns}__total_mwh", 0.0) or 0.0)
     clicks = pd.DataFrame(st.session_state.get(f"{ns}__clicks", []))
@@ -443,14 +402,13 @@ def _year_state(ns: str):
     cal_now   = float(CAL_USED.get(ns) or 0.0)
     return total, fixed_mwh, avg_fixed, rest_mwh, cal_now
 
-# --- 2) Rendu par année
 def render_year(ns: str, title: str):
     total, fixed_mwh, avg_fixed, rest_mwh, cal_now = _year_state(ns)
 
     with st.container(border=True):
         st.markdown(f"### {title} — restant **{rest_mwh:.0f} MWh** · CAL du jour **{cal_now:.2f} €/MWh** (source {CAL_DATE})")
 
-        # SLIDER en MWh (garde-fous pour petits restants)
+        # Slider MWh (avec garde-fous)
         if rest_mwh <= 0:
             st.info("Plus aucun MWh à fixer pour cette année.")
             extra = 0.0
@@ -464,24 +422,20 @@ def render_year(ns: str, title: str):
             else:
                 step = round(rest_mwh / 5, 3) or 0.001
                 def_val = round(rest_mwh / 2, 3)
-
             def_val = max(0.0, min(float(rest_mwh), float(def_val)))
 
             extra = st.slider(
                 f"MWh à fixer aujourd’hui ({title})",
-                min_value=0.0,
-                max_value=float(rest_mwh),
-                step=float(step),
-                value=float(def_val),
+                min_value=0.0, max_value=float(rest_mwh),
+                step=float(step), value=float(def_val),
                 key=f"{ns}__mw_click",
                 help="Choisissez directement la quantité en MWh à fixer aujourd’hui."
             )
 
-        # --- AVANT (projection interne : fixé @avg_fixed, restant @CAL du jour)
+        # AVANT / APRÈS (projection simple)
         budget_before = (avg_fixed or 0.0) * fixed_mwh + cal_now * rest_mwh
         unit_before   = (budget_before / total) if total > 0 else None
 
-        # --- APRÈS (on fixe 'extra' au CAL, le reste du restant reste @CAL)
         new_fixed_mwh   = fixed_mwh + extra
         new_fixed_cost  = (avg_fixed or 0.0) * fixed_mwh + cal_now * extra
         remaining_after = max(0.0, total - new_fixed_mwh)
@@ -489,35 +443,30 @@ def render_year(ns: str, title: str):
         budget_after    = new_fixed_cost + projected_after
         unit_after      = (budget_after / total) if total > 0 else None
 
-        # Prix moyen du FIXÉ après clic
         fixed_avg_after = ((avg_fixed or 0.0) * fixed_mwh + cal_now * extra) / new_fixed_mwh if new_fixed_mwh > 0 else None
 
-        # KPIs
         c1, c2, c3 = st.columns(3)
-       
         with c1:
-            st.metric("Prix d'achat moyen (après clic)",
-                      f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh"),
-                      delta=(f"{( (fixed_avg_after or avg_fixed) - (avg_fixed or 0) ):+.2f} €/MWh" if fixed_avg_after is not None and avg_fixed is not None else None))
+            st.metric("Prix d'achat moyen (après fixation)",
+                      price_eur_mwh(fixed_avg_after) if fixed_avg_after is not None else ("—" if avg_fixed is None else price_eur_mwh(avg_fixed)),
+                      delta=(f"{((fixed_avg_after or avg_fixed) - (avg_fixed or 0)):+.2f} €/MWh" if fixed_avg_after is not None and avg_fixed is not None else None))
         with c2:
             cover_after = (new_fixed_mwh/total*100.0) if total>0 else 0.0
-            st.metric("Couverture (après clic)", f"{cover_after:.1f} %",
+            st.metric("Couverture (après fixation)", f"{cover_after:.1f} %",
                       delta=(f"{(extra/total*100.0):+.1f} pts" if total>0 else None))
         with c3:
             delta_budget = budget_after - budget_before
-            st.metric("Budget total estimé (après clic)",
-                      _fmt_eur(budget_after),
-                      delta=( _fmt_eur(delta_budget) if abs(delta_budget) >= 0.5 else "0 €"))
+            st.metric("Budget total estimé (après fixation)", eur(budget_after),
+                      delta=( eur(delta_budget) if abs(delta_budget) >= 0.5 else "0 €"))
 
-        # --- Barre horizontale (fixé / clic / restant)
         seg = pd.DataFrame({
-            "segment": ["Fixé existant", "Nouveau clic", "Restant après"],
-            "mwh":     [fixed_mwh,       extra,          remaining_after]
+            "segment": ["Fixé existant", "Nouvelle fixation", "Restant après"],
+            "mwh":     [fixed_mwh,       extra,               remaining_after]
         })
         bar = alt.Chart(seg).mark_bar(height=20).encode(
             x=alt.X("sum(mwh):Q", stack="zero", title=f"Répartition {title} (MWh) — Total {total:.0f}"),
             color=alt.Color("segment:N", scale=alt.Scale(
-                domain=["Fixé existant","Nouveau clic","Restant après"],
+                domain=["Fixé existant","Nouvelle fixation","Restant après"],
                 range=["#22c55e","#3b82f6","#9ca3af"])),
             tooltip=[alt.Tooltip("segment:N"), alt.Tooltip("mwh:Q", format=".0f", title="MWh")]
         ).properties(width="container")
@@ -525,58 +474,26 @@ def render_year(ns: str, title: str):
 
         st.caption(
             "Le budget projeté valorise déjà le **restant** au **CAL du jour** ; "
-            "cliquer aujourd’hui **déplace** du ‘projeté’ vers du ‘fixé’. "
+            "fixer aujourd’hui **déplace** du ‘projeté’ vers du ‘fixé’. "
             "L’impact visible est surtout sur le **prix moyen du fixé** et la **couverture**."
         )
 
-# --- 3 onglets (on conserve la structure actuelle)
+# --- 3 onglets (identiques à ta structure)
 tabs = st.tabs(["2026", "2027", "2028"])
 with tabs[0]: render_year("y2026", "2026")
 with tabs[1]: render_year("y2027", "2027")
 with tabs[2]: render_year("y2028", "2028")
-# ===================== FIN SIMULATION PAR MWh =====================
-
 
 # ===================== CONTRATS MULTI-MODULES (SIDEBAR + REGLAGES) =====================
-
-# 1) Récup prix CAL depuis la synthèse (fallback si indispo)
-try:
-    _cal = fetch_flexypower_cals()
-except Exception:
-    _cal = {"CAL-26": None, "CAL-27": None, "CAL-28": None, "date": None}
-
-CAL_FALLBACK = {"CAL-26": 84.13, "CAL-27": 79.33, "CAL-28": 74.49}
-CAL_USED = {
-    "y2026": _cal.get("CAL-26") or CAL_FALLBACK["CAL-26"],
-    "y2027": _cal.get("CAL-27") or CAL_FALLBACK["CAL-27"],
-    "y2028": _cal.get("CAL-28") or CAL_FALLBACK["CAL-28"],
-}
-CAL_DATE = _cal.get("date") or "—"
-
-YEARS = [("y2026", "2026"), ("y2027", "2027"), ("y2028", "2028")]
-
-def _fmt_eur(amount: float, dec: int = 0) -> str:
-    s = f"{amount:,.{dec}f}".replace(",", " ")
-    return f"{s} €"
-
-# 2) INIT des clés + PANNEAU LATERAL (réglages par année)
-# ===================== BARRE LATÉRALE — CONTRATS =====================
+# 1) Barre latérale — paramètres
 st.sidebar.header("Paramètres contrats")
 
-# --- petit helper local (évite collision de nom)
-def _fmt_eur_sb(amount: float, dec: int = 0) -> str:
-    s = f"{amount:,.{dec}f}".replace(",", " ")
-    return f"{s} €"
-
-# ---------- 1) CONTRATS PASSÉS (saisie simple) : 2024 & 2025 ----------
+# Contrats passés
 st.sidebar.subheader("Contrats passés (saisie simple)")
-
 for ns, y in [("y2024", "2024"), ("y2025", "2025")]:
     vol_key   = f"{ns}__fixed_volume"
     price_key = f"{ns}__fixed_price"
     budg_key  = f"{ns}__fixed_budget"
-
-    # init si absent
     if vol_key not in st.session_state:   st.session_state[vol_key] = 0.0
     if price_key not in st.session_state: st.session_state[price_key] = 0.0
 
@@ -589,15 +506,13 @@ for ns, y in [("y2024", "2024"), ("y2025", "2025")]:
         budget = vol * price
         st.session_state[budg_key] = budget
 
-        st.metric("Budget total", _fmt_eur_sb(budget))
-        st.caption(f"Calcul : {vol:.0f} MWh × {price:.2f} €/MWh = {_fmt_eur_sb(budget)}")
+        st.metric("Budget total", eur(budget))
+        st.caption(f"Calcul : {mwh(vol,0)} × {price_eur_mwh(price) if price>0 else '—'} = {eur(budget)}")
 
-# séparation visuelle
 st.sidebar.divider()
 
-# ---------- 2) CONTRATS FUTURS (avec clics) : 2026, 2027, 2028 ----------
-st.sidebar.subheader("Contrats futurs (avec clics)")
-
+# Contrats futurs (avec fixations)
+st.sidebar.subheader("Contrats futurs (avec fixations)")
 FUTURE_YEARS = [("y2026", "2026"), ("y2027", "2027"), ("y2028", "2028")]
 for ns, y in FUTURE_YEARS:
     total_key  = f"{ns}__total_mwh"
@@ -605,7 +520,6 @@ for ns, y in FUTURE_YEARS:
     clicks_key = f"{ns}__clicks"
     init_key   = f"{ns}__initialized"
 
-    # init propre si première exécution
     if init_key not in st.session_state:
         st.session_state[total_key]  = 200.0
         st.session_state[max_key]    = 5
@@ -614,18 +528,15 @@ for ns, y in FUTURE_YEARS:
 
     with st.sidebar.expander(f"Contrat {y}", expanded=(ns == "y2026")):
         st.number_input("Volume total (MWh)", min_value=0.0, step=5.0, format="%.0f", key=total_key)
-        st.number_input("Clics max autorisés", min_value=1, max_value=20, step=1, format="%d", key=max_key)
-        # rappel rapide d’usage
+        st.number_input("Fixations max autorisées", min_value=1, max_value=20, step=1, format="%d", key=max_key)
         used = len(st.session_state.get(clicks_key, []))
-        st.caption(f"Clics utilisés : {used}/{int(st.session_state[max_key])}.")
-# ===================== FIN BARRE LATÉRALE =====================
+        st.caption(f"Fixations utilisées : {used}/{int(st.session_state[max_key])}.")
 
-# 3) MODULE PAR ANNEE (lit les réglages depuis la sidebar)
+# 2) Module par année (lecture des réglages) — même API, micro-UX : copier fidèlement ton bloc avec libellés
 def render_contract_module(title: str, ns: str):
     with st.container(border=True):
         st.subheader(title)
 
-        # --- Clés/état
         total_key   = f"{ns}__total_mwh"
         max_key     = f"{ns}__max_clicks"
         clicks_key  = f"{ns}__clicks"
@@ -642,7 +553,6 @@ def render_contract_module(title: str, ns: str):
         clicks     = st.session_state.get(clicks_key, [])
         df_clicks  = pd.DataFrame(clicks)
 
-        # types sûrs
         if not df_clicks.empty:
             df_clicks["volume"] = pd.to_numeric(df_clicks["volume"], errors="coerce").fillna(0.0)
             df_clicks["price"]  = pd.to_numeric(df_clicks["price"],  errors="coerce").fillna(0.0)
@@ -656,21 +566,19 @@ def render_contract_module(title: str, ns: str):
         avg_pond   = round(((df_clicks["price"]*df_clicks["volume"]).sum()/fixed_mwh), 2) if fixed_mwh > 0 else None
         cal_price  = CAL_USED.get(ns)
 
-        # --- (A) Synthèse
         c1, c2, c3, c4, c5 = st.columns([1,1,1,1,1.2])
-        c1.metric("Volume total", f"{total_mwh:.0f} MWh", help="Modifiable dans la barre latérale.")
-        c2.metric("Déjà fixé", f"{fixed_mwh:.0f} MWh")
-        c3.metric("Restant", f"{rest_mwh:.0f} MWh")
+        c1.metric("Volume total", mwh(total_mwh, 0), help="Modifiable dans la barre latérale.")
+        c2.metric("Déjà fixé", mwh(fixed_mwh, 0))
+        c3.metric("Restant", mwh(rest_mwh, 0))
         c4.metric("Couverture", f"{cov_pct:.1f} %")
-        c5.metric(f"CAL utilisé ({CAL_DATE})", f"{cal_price:.2f} €/MWh" if cal_price is not None else "—",
+        c5.metric(f"CAL utilisé ({CAL_DATE})", price_eur_mwh(cal_price) if cal_price is not None else "—",
                   help="Forward utilisé pour estimer le budget restant.")
         st.progress(min(cov_pct/100.0, 1.0), text=f"Couverture {cov_pct:.1f}%")
 
-        # --- (B) Budget (FIXÉ uniquement — volume, budget, prix moyen €/MWh)
-        # Calcule STRICTEMENT sur les clics déjà fixés (sans tenir compte du restant ni du CAL)
+        # Budget (déjà fixé)
         if not df_clicks.empty and fixed_mwh > 0:
-            total_cost_fixed = float((df_clicks["price"] * df_clicks["volume"]).sum())   # € = (€/MWh × MWh)
-            avg_fixed_mwh    = float(total_cost_fixed / fixed_mwh)                       # €/MWh
+            total_cost_fixed = float((df_clicks["price"] * df_clicks["volume"]).sum())
+            avg_fixed_mwh    = float(total_cost_fixed / fixed_mwh)
         else:
             total_cost_fixed = 0.0
             avg_fixed_mwh    = None
@@ -678,23 +586,18 @@ def render_contract_module(title: str, ns: str):
         with st.container(border=True):
             st.markdown("#### Budget (déjà fixé)")
             c1, c2, c3 = st.columns([1, 1, 1])
-            c1.metric("Volume fixé", f"{fixed_mwh:.0f} MWh")
-            c2.metric("Prix moyen fixé", f"{avg_fixed_mwh:.2f} €/MWh" if avg_fixed_mwh is not None else "—")
-            c3.metric("Budget fixé", _fmt_eur(total_cost_fixed))
-
+            c1.metric("Volume fixé", mwh(fixed_mwh, 0))
+            c2.metric("Prix moyen fixé", price_eur_mwh(avg_fixed_mwh) if avg_fixed_mwh is not None else "—")
+            c3.metric("Budget fixé", eur(total_cost_fixed))
             if avg_fixed_mwh is not None:
-                st.caption(
-                    f"Calcul : Σ(Volume × Prix) / Volume fixé = {avg_fixed_mwh:.2f} €/MWh "
-                    f"(Σ = {_fmt_eur(total_cost_fixed)}, Volume = {fixed_mwh:.0f} MWh)."
-                )
+                st.caption(f"Calcul : Σ(Volume × Prix) / Volume fixé = {price_eur_mwh(avg_fixed_mwh)} "
+                           f"(Σ = {eur(total_cost_fixed)}, Volume = {mwh(fixed_mwh,0)}).")
             else:
-                st.caption("Aucun clic enregistré pour l’instant (prix moyen du fixé indisponible).")
+                st.caption("Aucune fixation enregistrée pour l’instant (prix moyen du fixé indisponible).")
 
-
-
-        # --- (C) Ajouter un clic
+        # Ajouter une fixation (ex 'clic')
         with st.container(border=True):
-            st.markdown("#### Ajouter un clic")
+            st.markdown("#### Ajouter une fixation")
             col1, col2, col3, col4 = st.columns([1, 1, 1, 0.8])
             with col1:
                 new_date = st.date_input("Date", value=date.today(), key=date_key)
@@ -704,29 +607,29 @@ def render_contract_module(title: str, ns: str):
                 new_vol = st.number_input("Volume (MWh)", min_value=0.0, step=5.0, format="%.0f", key=vol_key)
             with col4:
                 st.markdown("&nbsp;")
-                add_click = st.button("➕ Ajouter", key=add_btn, use_container_width=True)
+                used_clicks = len(clicks)
+                can_add = (used_clicks < int(max_clicks)) and (rest_mwh > 0) and (new_vol > 0) and (new_price > 0)
+                st.button("➕ Ajouter", key=add_btn, use_container_width=True, disabled=not can_add)
 
-            used_clicks = len(clicks)
-            st.caption(f"Clics utilisés : {used_clicks}/{max_clicks} (modifiable dans la barre latérale).")
+            st.caption(f"Fixations utilisées : {used_clicks}/{max_clicks} (modifiable dans la barre latérale).")
 
-            if add_click:
+            # Gestion ajout (mêmes règles que ton code, mais bouton désactivé quand non valable)
+            if st.session_state.get(add_btn, False):  # bouton pressé ET pas désactivé
                 if used_clicks >= int(max_clicks):
-                    st.error(f"Limite atteinte ({int(max_clicks)} clics).")
+                    st.error(f"Limite atteinte ({int(max_clicks)} fixations).")
                 elif new_vol <= 0 or new_price <= 0:
                     st.warning("Prix et volume doivent être > 0.")
                 else:
-                    st.session_state[clicks_key].append(
-                        {"date": new_date, "price": float(new_price), "volume": float(new_vol)}
-                    )
-                    st.success("Clic ajouté.")
+                    st.session_state[clicks_key].append({"date": new_date, "price": float(new_price), "volume": float(new_vol)})
+                    st.success("Fixation ajoutée.")
                     for k in (price_key, vol_key):
                         st.session_state.pop(k, None)
                     st.rerun()
 
-        # --- (D) Historique (expander)
-        with st.expander("Clics enregistrés", expanded=not df_clicks.empty):
+        # Historique des fixations
+        with st.expander("Fixations enregistrées", expanded=not df_clicks.empty):
             if df_clicks.empty:
-                st.caption("Aucun clic pour l’instant.")
+                st.caption("Aucune fixation pour l’instant.")
             else:
                 df_disp = df_clicks.copy()
                 df_disp["date"] = pd.to_datetime(df_disp["date"]).dt.date
@@ -737,18 +640,16 @@ def render_contract_module(title: str, ns: str):
                     "date": "Date", "price": "Prix (€/MWh)", "volume": "Volume (MWh)",
                 })[["Date", "Prix (€/MWh)", "Volume (MWh)", "% du total"]]
                 df_disp.index = range(1, len(df_disp) + 1)
-                df_disp.index.name = "Clic #"
+                df_disp.index.name = "Fixation #"
 
                 st.dataframe(df_disp, use_container_width=True)
 
                 del_idx = st.selectbox(
-                    "Supprimer un clic",
+                    "Supprimer une fixation",
                     options=df_disp.index.tolist(),
-                    format_func=lambda i: (
-                        f"{i} — {df_disp.loc[i, 'Date']} | "
-                        f"{df_disp.loc[i, 'Volume (MWh)']} MWh @ "
-                        f"{df_disp.loc[i, 'Prix (€/MWh)']} €/MWh"
-                    ),
+                    format_func=lambda i: (f"{i} — {df_disp.loc[i, 'Date']} | "
+                                           f"{df_disp.loc[i, 'Volume (MWh)']} MWh @ "
+                                           f"{df_disp.loc[i, 'Prix (€/MWh)']} €/MWh"),
                     key=del_select,
                 )
                 cdel, cdl = st.columns([1,1])
@@ -761,23 +662,17 @@ def render_contract_module(title: str, ns: str):
                     st.download_button(
                         "Télécharger l’historique (CSV)",
                         data=csv_bytes,
-                        file_name=f"clics_blocages_{ns}.csv",
+                        file_name=f"fixations_{ns}.csv",
                         mime="text/csv",
                         key=dl_btn,
                         use_container_width=True
                     )
 
-# ======= Rendu avec des onglets =======
+# Rendu modules année (identique à ta fin de fichier)
 tab2026, tab2027, tab2028 = st.tabs(["Contrat 2026", "Contrat 2027", "Contrat 2028"])
-
 with tab2026:
     render_contract_module("Couverture du contrat 2026", ns="y2026")
-
 with tab2027:
     render_contract_module("Couverture du contrat 2027", ns="y2027")
-
 with tab2028:
     render_contract_module("Couverture du contrat 2028", ns="y2028")
-# ===================== FIN CONTRATS MULTI-MODULES =====================
-
-# ===================== FIN CONTRATS MULTI-MODULES =====================
