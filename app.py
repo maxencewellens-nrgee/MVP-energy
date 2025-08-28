@@ -543,14 +543,52 @@ def _fmt_eur(amount: float, dec: int = 0) -> str:
     return f"{s} €"
 
 # 2) INIT des clés + PANNEAU LATERAL (réglages par année)
-st.sidebar.header("Paramètres contrat")
-for ns, y in YEARS:
-    total_key = f"{ns}__total_mwh"
-    max_key   = f"{ns}__max_clicks"
-    clicks_key= f"{ns}__clicks"
-    init_key  = f"{ns}__initialized"
+# ===================== BARRE LATÉRALE — CONTRATS =====================
+st.sidebar.header("Paramètres contrats")
 
-    # init une seule fois
+# --- petit helper local (évite collision de nom)
+def _fmt_eur_sb(amount: float, dec: int = 0) -> str:
+    s = f"{amount:,.{dec}f}".replace(",", " ")
+    return f"{s} €"
+
+# ---------- 1) CONTRATS PASSÉS (saisie simple) : 2024 & 2025 ----------
+st.sidebar.subheader("Contrats passés (saisie simple)")
+
+for ns, y in [("y2024", "2024"), ("y2025", "2025")]:
+    vol_key   = f"{ns}__fixed_volume"
+    price_key = f"{ns}__fixed_price"
+    budg_key  = f"{ns}__fixed_budget"
+
+    # init si absent
+    if vol_key not in st.session_state:   st.session_state[vol_key] = 0.0
+    if price_key not in st.session_state: st.session_state[price_key] = 0.0
+
+    with st.sidebar.expander(f"Contrat {y}", expanded=False):
+        st.number_input("Volume (MWh)", min_value=0.0, step=5.0, format="%.0f", key=vol_key)
+        st.number_input("Prix (€/MWh)", min_value=0.0, step=1.0, format="%.2f", key=price_key)
+
+        vol   = float(st.session_state[vol_key])
+        price = float(st.session_state[price_key])
+        budget = vol * price
+        st.session_state[budg_key] = budget
+
+        st.metric("Budget total", _fmt_eur_sb(budget))
+        st.caption(f"Calcul : {vol:.0f} MWh × {price:.2f} €/MWh = {_fmt_eur_sb(budget)}")
+
+# séparation visuelle
+st.sidebar.divider()
+
+# ---------- 2) CONTRATS FUTURS (avec clics) : 2026, 2027, 2028 ----------
+st.sidebar.subheader("Contrats futurs (avec clics)")
+
+FUTURE_YEARS = [("y2026", "2026"), ("y2027", "2027"), ("y2028", "2028")]
+for ns, y in FUTURE_YEARS:
+    total_key  = f"{ns}__total_mwh"
+    max_key    = f"{ns}__max_clicks"
+    clicks_key = f"{ns}__clicks"
+    init_key   = f"{ns}__initialized"
+
+    # init propre si première exécution
     if init_key not in st.session_state:
         st.session_state[total_key]  = 200.0
         st.session_state[max_key]    = 5
@@ -558,19 +596,12 @@ for ns, y in YEARS:
         st.session_state[init_key]   = True
 
     with st.sidebar.expander(f"Contrat {y}", expanded=(ns == "y2026")):
-        st.number_input(
-            "Volume total (MWh)",
-            min_value=0.0, step=5.0, format="%.0f",
-            key=total_key,
-            help="Volume du contrat pour l’année."
-        )
-        st.number_input(
-            "Clics max autorisés",
-            min_value=1, max_value=20, step=1, format="%d",
-            key=max_key,
-            help="Limite de clics pour l’année."
-        )
-        st.caption(f"CAL-{y[-2:]} utilisé ({CAL_DATE}) : {CAL_USED[ns]:.2f} €/MWh")
+        st.number_input("Volume total (MWh)", min_value=0.0, step=5.0, format="%.0f", key=total_key)
+        st.number_input("Clics max autorisés", min_value=1, max_value=20, step=1, format="%d", key=max_key)
+        # rappel rapide d’usage
+        used = len(st.session_state.get(clicks_key, []))
+        st.caption(f"Clics utilisés : {used}/{int(st.session_state[max_key])}.")
+# ===================== FIN BARRE LATÉRALE =====================
 
 # 3) MODULE PAR ANNEE (lit les réglages depuis la sidebar)
 def render_contract_module(title: str, ns: str):
