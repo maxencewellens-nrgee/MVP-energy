@@ -37,61 +37,24 @@ def fmt_be(d) -> str:
 @st.cache_data(ttl=24*3600)
 def fetch_daily(start_date: str, end_inclusive_date: str) -> pd.DataFrame:
     """
-    Récupère les prix day-ahead (horaire) via entsoe-py, agrège en jour (avg/mn/mx/n).
-    IMPORTANT: ENTSO-E attend des timestamps en Europe/Brussels (CET/CEST), pas en UTC.
-    start_date, end_inclusive_date: 'YYYY-MM-DD' (end est inclus).
+    Récupère prix day-ahead (heure) via entsoe-py, agrège en jour (avg/mn/mx/n) en heure BE.
+    start_date, end_inclusive_date: 'YYYY-MM-DD'. end est inclus (on ajoute +1 jour côté API).
     """
-    # 1) Timestamps en Europe/Brussels (CET/CEST)
-    start_be = pd.Timestamp(start_date, tz=tz_be).normalize()
-    end_be_excl = pd.Timestamp(end_inclusive_date, tz=tz_be).normalize() + pd.Timedelta(days=1)  # exclusif
-
-    # 2) Helper pour requêter une plage en gérant une éventuelle 400
-    def _fetch_range(t0_be: pd.Timestamp, t1_be: pd.Timestamp) -> pd.Series:
-        try:
-            return client.query_day_ahead_prices(ZONE, start=t0_be, end=t1_be)
-        except requests.HTTPError as e:
-            # fallback: on découpe en semaines si l'API est chatouilleuse
-            if e.response is not None and e.response.status_code == 400:
-                out = []
-                week_edges = pd.date_range(t0_be, t1_be, freq="7D", tz=tz_be)
-                if len(week_edges) == 0 or week_edges[0] != t0_be:
-                    week_edges = pd.DatetimeIndex([t0_be]).append(week_edges)
-                if len(week_edges) == 0 or week_edges[-1] != t1_be:
-                    week_edges = week_edges.append(pd.DatetimeIndex([t1_be]))
-                for i in range(len(week_edges) - 1):
-                    w0, w1 = week_edges[i], week_edges[i+1]
-                    s = client.query_day_ahead_prices(ZONE, start=w0, end=w1)
-                    out.append(s)
-                return pd.concat(out) if out else pd.Series(dtype=float)
-            raise
-
-    # 3) Requêtes par mois (robuste) en heure locale BE
-    month_edges = pd.date_range(start_be, end_be_excl, freq="MS", tz=tz_be)
-    if len(month_edges) == 0 or month_edges[0] != start_be:
-        month_edges = pd.DatetimeIndex([start_be]).append(month_edges)
-    if len(month_edges) == 0 or month_edges[-1] != end_be_excl:
-        month_edges = month_edges.append(pd.DatetimeIndex([end_be_excl]))
-
+    start = pd.Timestamp(start_date, tz=tz_utc)
+    end   = pd.Timestamp(end_inclusive_date, tz=tz_utc) + pd.Timedelta(days=1)  # exclusif
+    months = pd.date_range(start.normalize(), end.normalize(), freq="MS", tz=tz_utc)
     series = []
-    for i in range(len(month_edges) - 1):
-        t0, t1 = month_edges[i], month_edges[i+1]
-        s = _fetch_range(t0, t1)
+    for i, t0 in enumerate(months):
+        t1 = months[i+1] if i+1 < len(months) else end
+        s = client.query_day_ahead_prices(ZONE, start=t0, end=t1)
         series.append(s)
-
-    if not series:
-        return pd.DataFrame(columns=["date", "avg", "mn", "mx", "n"])
-
     s_all = pd.concat(series).sort_index()
-    # entsoe-py renvoie déjà index tz-aware; on convertit en BE par sécurité
     s_all = s_all.tz_convert(tz_be)
-
-    # 4) Agrégation journalière
-    df = s_all.to_frame("price").reset_index().rename(columns={"index": "ts"})
+    df = s_all.to_frame("price").reset_index().rename(columns={"index":"ts"})
     df["date"] = df["ts"].dt.date
     out = df.groupby("date")["price"].agg(avg="mean", mn="min", mx="max", n="count").reset_index()
-    out[["avg", "mn", "mx"]] = out[["avg", "mn", "mx"]].round(2)
+    out[["avg","mn","mx"]] = out[["avg","mn","mx"]].round(2)
     return out
-
 
 def decision_from_last(daily: pd.DataFrame, lookback_days: int = 180) -> dict:
     """
@@ -482,15 +445,12 @@ def _year_state(ns: str):
 
 # --- 2) Rendu par année
 def render_year(ns: str, title: str):
-    # État de l'année
     total, fixed_mwh, avg_fixed, rest_mwh, cal_now = _year_state(ns)
 
     with st.container(border=True):
-        st.markdown(
-            f"### {title} — restant **{rest_mwh:.0f} MWh** · CAL du jour **{cal_now:.2f} €/MWh** (source {CAL_DATE})"
-        )
+        st.markdown(f"### {title} — restant **{rest_mwh:.0f} MWh** · CAL du jour **{cal_now:.2f} €/MWh** (source {CAL_DATE})")
 
-        # --- SLIDER MWh (garde-fous)
+        # SLIDER en MWh (garde-fous pour petits restants)
         if rest_mwh <= 0:
             st.info("Plus aucun MWh à fixer pour cette année.")
             extra = 0.0
@@ -517,69 +477,49 @@ def render_year(ns: str, title: str):
                 help="Choisissez directement la quantité en MWh à fixer aujourd’hui."
             )
 
-        # --- AVANT (fixé @avg_fixed, restant @CAL)
-        fixed_cost_before = (avg_fixed or 0.0) * fixed_mwh
-        budget_before     = fixed_cost_before + cal_now * rest_mwh
+        # --- AVANT (projection interne : fixé @avg_fixed, restant @CAL du jour)
+        budget_before = (avg_fixed or 0.0) * fixed_mwh + cal_now * rest_mwh
+        unit_before   = (budget_before / total) if total > 0 else None
 
-        # --- APRÈS (on fixe 'extra' au CAL, le reste reste @CAL)
-        new_fixed_mwh     = fixed_mwh + extra
-        fixed_cost_after  = fixed_cost_before + cal_now * extra
-        remaining_after   = max(0.0, total - new_fixed_mwh)
-        budget_after      = fixed_cost_after + cal_now * remaining_after
-        fixed_avg_after   = (fixed_cost_after / new_fixed_mwh) if new_fixed_mwh > 0 else None
+        # --- APRÈS (on fixe 'extra' au CAL, le reste du restant reste @CAL)
+        new_fixed_mwh   = fixed_mwh + extra
+        new_fixed_cost  = (avg_fixed or 0.0) * fixed_mwh + cal_now * extra
+        remaining_after = max(0.0, total - new_fixed_mwh)
+        projected_after = cal_now * remaining_after
+        budget_after    = new_fixed_cost + projected_after
+        unit_after      = (budget_after / total) if total > 0 else None
 
-        # === KPIs ===============================================================
+        # Prix moyen du FIXÉ après clic
+        fixed_avg_after = ((avg_fixed or 0.0) * fixed_mwh + cal_now * extra) / new_fixed_mwh if new_fixed_mwh > 0 else None
+
+        # KPIs
         c1, c2, c3 = st.columns(3)
-
-        # 1) Prix d'achat moyen (fixé) — VERT si ça BAISSE
+       
         with c1:
-            delta_price = None
-            if fixed_avg_after is not None and avg_fixed is not None:
-                delta_price = fixed_avg_after - avg_fixed  # baisse => vert (inverse)
-            st.metric(
-                "Prix d'achat moyen (après clic)",
-                f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None
-                else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh"),
-                delta=(f"{delta_price:+.2f} €/MWh" if delta_price is not None else None),
-                delta_color="inverse",
-                help="Moyenne pondérée sur les volumes déjà verrouillés uniquement."
-            )
-
-        # 2) Couverture — VERT si ça MONTE
+            st.metric("Prix d'achat moyen (après clic)",
+                      f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh"),
+                      delta=(f"{( (fixed_avg_after or avg_fixed) - (avg_fixed or 0) ):+.2f} €/MWh" if fixed_avg_after is not None and avg_fixed is not None else None))
         with c2:
-            cover_after = (new_fixed_mwh / total * 100.0) if total > 0 else 0.0
-            delta_cov   = (extra / total * 100.0) if total > 0 else None
-            st.metric(
-                "Couverture (après clic)",
-                f"{cover_after:.1f} %",
-                delta=(f"{delta_cov:+.1f} pts" if delta_cov is not None else None),
-                delta_color="normal",
-            )
-
-        # 3) Budget total estimé — PAS de delta
+            cover_after = (new_fixed_mwh/total*100.0) if total>0 else 0.0
+            st.metric("Couverture (après clic)", f"{cover_after:.1f} %",
+                      delta=(f"{(extra/total*100.0):+.1f} pts" if total>0 else None))
         with c3:
-            st.metric(
-                "Budget total estimé (après clic)",
-                _fmt_eur(budget_after)
-            )
+            delta_budget = budget_after - budget_before
+            st.metric("Budget total estimé (après clic)",
+                      _fmt_eur(budget_after),
+                      delta=( _fmt_eur(delta_budget) if abs(delta_budget) >= 0.5 else "0 €"))
 
-        # --- Barre horizontale (fixé / clic / restant) -------------------------
+        # --- Barre horizontale (fixé / clic / restant)
         seg = pd.DataFrame({
             "segment": ["Fixé existant", "Nouveau clic", "Restant après"],
             "mwh":     [fixed_mwh,       extra,          remaining_after]
         })
         bar = alt.Chart(seg).mark_bar(height=20).encode(
-            x=alt.X("sum(mwh):Q", stack="zero",
-                    title=f"Répartition {title} (MWh) — Total {total:.0f}"),
-            color=alt.Color(
-                "segment:N",
-                scale=alt.Scale(
-                    domain=["Fixé existant", "Nouveau clic", "Restant après"],
-                    range=["#22c55e", "#3b82f6", "#9ca3af"]
-                )
-            ),
-            tooltip=[alt.Tooltip("segment:N"),
-                     alt.Tooltip("mwh:Q", format=".0f", title="MWh")]
+            x=alt.X("sum(mwh):Q", stack="zero", title=f"Répartition {title} (MWh) — Total {total:.0f}"),
+            color=alt.Color("segment:N", scale=alt.Scale(
+                domain=["Fixé existant","Nouveau clic","Restant après"],
+                range=["#22c55e","#3b82f6","#9ca3af"])),
+            tooltip=[alt.Tooltip("segment:N"), alt.Tooltip("mwh:Q", format=".0f", title="MWh")]
         ).properties(width="container")
         st.altair_chart(bar, use_container_width=True)
 
@@ -588,7 +528,6 @@ def render_year(ns: str, title: str):
             "cliquer aujourd’hui **déplace** du ‘projeté’ vers du ‘fixé’. "
             "L’impact visible est surtout sur le **prix moyen du fixé** et la **couverture**."
         )
-
 
 # --- 3 onglets (on conserve la structure actuelle)
 tabs = st.tabs(["2026", "2027", "2028"])
