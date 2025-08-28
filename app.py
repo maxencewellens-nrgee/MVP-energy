@@ -34,27 +34,132 @@ def fmt_be(d) -> str:
     """Format JJ/MM/AAAA."""
     return pd.to_datetime(d).strftime("%d/%m/%Y")
 
+import time
+
 @st.cache_data(ttl=24*3600)
 def fetch_daily(start_date: str, end_inclusive_date: str) -> pd.DataFrame:
     """
-    Récupère prix day-ahead (heure) via entsoe-py, agrège en jour (avg/mn/mx/n) en heure BE.
-    start_date, end_inclusive_date: 'YYYY-MM-DD'. end est inclus (on ajoute +1 jour côté API).
+    Récupère A44 (Day-Ahead Prices) via entsoe-py en UTC, agrège par jour civil BE.
+    Stratégie robuste :
+      1) on tente par MOIS,
+      2) si 400/500 → on retente par SEMAINES,
+      3) si encore KO → on retente JOUR par JOUR,
+      4) retries exponentiels sur chaque sous-plage.
     """
-    start = pd.Timestamp(start_date, tz=tz_utc)
-    end   = pd.Timestamp(end_inclusive_date, tz=tz_utc) + pd.Timedelta(days=1)  # exclusif
-    months = pd.date_range(start.normalize(), end.normalize(), freq="MS", tz=tz_utc)
-    series = []
-    for i, t0 in enumerate(months):
-        t1 = months[i+1] if i+1 < len(months) else end
-        s = client.query_day_ahead_prices(ZONE, start=t0, end=t1)
-        series.append(s)
-    s_all = pd.concat(series).sort_index()
-    s_all = s_all.tz_convert(tz_be)
-    df = s_all.to_frame("price").reset_index().rename(columns={"index":"ts"})
-    df["date"] = df["ts"].dt.date
+    # bornes en UTC (entsoe-py attend UTC)
+    start_utc = pd.Timestamp(start_date, tz=tz_utc).normalize()
+    end_utc_excl = pd.Timestamp(end_inclusive_date, tz=tz_utc).normalize() + pd.Timedelta(days=1)
+
+    def _attempt(t0: pd.Timestamp, t1: pd.Timestamp, retries=3, base_sleep=0.4):
+        """Tente la requête sur [t0, t1) avec quelques retries doux."""
+        last_err = None
+        for k in range(retries):
+            try:
+                s = client.query_day_ahead_prices(ZONE, start=t0, end=t1)
+                # entsoe-py renvoie une série tz-aware; on la suppose OK
+                return s
+            except requests.HTTPError as e:
+                last_err = e
+                # logs utiles (mais non bloquants)
+                st.warning(f"HTTP {e.response.status_code if e.response else '?'} sur {t0}→{t1}, tentative {k+1}/{retries}…")
+                time.sleep(base_sleep * (1.5**k))
+            except Exception as e:
+                last_err = e
+                st.warning(f"Erreur {type(e).__name__} sur {t0}→{t1}, tentative {k+1}/{retries}…")
+                time.sleep(base_sleep * (1.5**k))
+        # échec définitif
+        st.error(f"Echec sur {t0}→{t1} : {repr(last_err)}")
+        return None
+
+    def _concat(parts):
+        parts = [p for p in parts if p is not None and len(p) > 0]
+        if not parts:
+            return None
+        return pd.concat(parts).sort_index()
+
+    # ---------- 1) TENTATIVE PAR MOIS ----------
+    month_edges = pd.date_range(start_utc, end_utc_excl, freq="MS", tz=tz_utc)
+    if len(month_edges) == 0 or month_edges[0] != start_utc:
+        month_edges = pd.DatetimeIndex([start_utc]).append(month_edges)
+    if len(month_edges) == 0 or month_edges[-1] != end_utc_excl:
+        month_edges = month_edges.append(pd.DatetimeIndex([end_utc_excl]))
+
+    monthly = []
+    month_failed_ranges = []
+    for i in range(len(month_edges) - 1):
+        a, b = month_edges[i], month_edges[i+1]
+        s = _attempt(a, b)
+        if s is None:
+            month_failed_ranges.append((a, b))
+        else:
+            monthly.append(s)
+        time.sleep(0.25)  # rate-limit soft
+
+    s_all = _concat(monthly) if month_failed_ranges == [] else None
+
+    # ---------- 2) FALLBACK PAR SEMAINES (pour les mois KO) ----------
+    weekly = [] if s_all is None else []
+    week_failed_ranges = []
+    if month_failed_ranges:
+        for (ma, mb) in month_failed_ranges:
+            week_edges = pd.date_range(ma, mb, freq="7D", tz=tz_utc)
+            if len(week_edges) == 0 or week_edges[0] != ma:
+                week_edges = pd.DatetimeIndex([ma]).append(week_edges)
+            if len(week_edges) == 0 or week_edges[-1] != mb:
+                week_edges = week_edges.append(pd.DatetimeIndex([mb]))
+
+            for i in range(len(week_edges) - 1):
+                a, b = week_edges[i], week_edges[i+1]
+                s = _attempt(a, b)
+                if s is None:
+                    week_failed_ranges.append((a, b))
+                else:
+                    weekly.append(s)
+                time.sleep(0.25)
+
+        if week_failed_ranges == []:
+            s_all = _concat(monthly + weekly)  # mix des mois OK + semaines OK
+
+    # ---------- 3) FALLBACK JOUR PAR JOUR (pour les semaines KO) ----------
+    daily_parts = []
+    if week_failed_ranges:
+        for (wa, wb) in week_failed_ranges:
+            days = pd.date_range(wa, wb, freq="D", tz=tz_utc)
+            if len(days) == 0 or days[0] != wa:
+                days = pd.DatetimeIndex([wa]).append(days)
+            if len(days) == 0 or days[-1] != wb:
+                days = days.append(pd.DatetimeIndex([wb]))
+
+            # parcours jour par jour
+            for i in range(len(days) - 1):
+                a, b = days[i], days[i+1]
+                s = _attempt(a, b, retries=2, base_sleep=0.3)
+                if s is None:
+                    # on skippe proprement ce jour au lieu de crasher
+                    st.warning(f"Skip jour {a.date()} (ENTSO-E indisponible).")
+                else:
+                    daily_parts.append(s)
+                time.sleep(0.2)
+
+        s_all = _concat(monthly + weekly + daily_parts)
+
+    # ---------- sortie vide si rien ----------
+    if s_all is None or len(s_all) == 0:
+        return pd.DataFrame(columns=["date", "avg", "mn", "mx", "n"])
+
+    # ---------- Conversion en Europe/Brussels + agrégation jour ----------
+    try:
+        s_all = s_all.tz_convert(tz_be)
+    except Exception:
+        # si déjà en tz BE, on ignore
+        pass
+
+    df = s_all.to_frame("price").reset_index().rename(columns={"index": "ts"})
+    df["date"] = df["ts"].dt.date  # jour civil BE
     out = df.groupby("date")["price"].agg(avg="mean", mn="min", mx="max", n="count").reset_index()
-    out[["avg","mn","mx"]] = out[["avg","mn","mx"]].round(2)
+    out[["avg", "mn", "mx"]] = out[["avg", "mn", "mx"]].round(2)
     return out
+
 
 def decision_from_last(daily: pd.DataFrame, lookback_days: int = 180) -> dict:
     """
@@ -93,10 +198,6 @@ def decision_from_last(daily: pd.DataFrame, lookback_days: int = 180) -> dict:
                 "last":round(last_price,2),"p10":round(p10,2),"p30":round(p30,2),"p70":round(p70,2)}
     return {"reco":"ATTENDRE","raison":f"Dernier prix {last_price:.2f} entre P30 {p30:.2f} et P70 {p70:.2f} : pas de signal fort.",
             "last":round(last_price,2),"p10":round(p10,2),"p30":round(p30,2),"p70":round(p70,2)}
-
-@st.cache_data(ttl=60*30)
-
-@st.cache_data(ttl=60*30)
 
 # --- FlexyPower: robuste (normal -> fallback via r.jina.ai -> read_html) ---
 
@@ -493,20 +594,17 @@ def render_year(ns: str, title: str):
         fixed_avg_after = ((avg_fixed or 0.0) * fixed_mwh + cal_now * extra) / new_fixed_mwh if new_fixed_mwh > 0 else None
 
         # KPIs
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3 = st.columns(3)
+       
         with c1:
-            st.metric("Prix moyen contrat (après clic)",
-                      f"{unit_after:.2f} €/MWh" if unit_after is not None else "—",
-                      delta=(f"{(unit_after - unit_before):+.2f} €/MWh" if unit_before is not None and unit_after is not None else None))
-        with c2:
-            st.metric("Prix moyen du fixé (après clic)",
+            st.metric("Prix d'achat moyen (après clic)",
                       f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh"),
                       delta=(f"{( (fixed_avg_after or avg_fixed) - (avg_fixed or 0) ):+.2f} €/MWh" if fixed_avg_after is not None and avg_fixed is not None else None))
-        with c3:
+        with c2:
             cover_after = (new_fixed_mwh/total*100.0) if total>0 else 0.0
             st.metric("Couverture (après clic)", f"{cover_after:.1f} %",
                       delta=(f"{(extra/total*100.0):+.1f} pts" if total>0 else None))
-        with c4:
+        with c3:
             delta_budget = budget_after - budget_before
             st.metric("Budget total estimé (après clic)",
                       _fmt_eur(budget_after),
