@@ -565,7 +565,7 @@ for ns, y in [("y2024", "2024"), ("y2025", "2025")]:
 
     with st.sidebar.expander(f"Contrat {y}", expanded=False):
         st.number_input("Volume (MWh)", min_value=0.0, step=5.0, format="%.0f", key=vol_key)
-        st.number_input("Prix (€/MWh)", min_value=0.0, step=1.0, format="%.2f", key=price_key)
+        st.number_input("Prix (€/MWh)", min_value=0.0, step=1.0, format="%.0f", key=price_key)
 
         vol   = float(st.session_state[vol_key])
         price = float(st.session_state[price_key])
