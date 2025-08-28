@@ -522,21 +522,17 @@ with c3:
 
 # 4) Budget total estimé — si tu veux le considérer 'plus bas = mieux', mets inverse
 with c4:
-    st.metric(
-        "Budget total estimé (après clic)",
-        _fmt_eur(budget_after),
+    st.metric("Budget total estimé (après clic)",_fmt_eur(budget_after),
         delta=(_fmt_eur(delta_budg) if abs(delta_budg) >= 0.5 else "0 €"),
-        delta_color="inverse"
-    )
+        delta_color="inverse")
 
         # --- Barre horizontale (fixé / clic / restant)
         seg = pd.DataFrame({"segment": ["Fixé existant", "Nouveau clic", "Restant après"],"mwh":[fixed_mwh, extra,remaining_after]})
-        bar = alt.Chart(seg).mark_bar(height=20).encode(
-            x=alt.X("sum(mwh):Q", stack="zero", title=f"Répartition {title} (MWh) — Total {total:.0f}"),
-            color=alt.Color("segment:N", scale=alt.Scale(
-                domain=["Fixé existant","Nouveau clic","Restant après"],
-                range=["#22c55e","#3b82f6","#9ca3af"])),
-            tooltip=[alt.Tooltip("segment:N"), alt.Tooltip("mwh:Q", format=".0f", title="MWh")]
+        bar = alt.Chart(seg).mark_bar(height=20).encode(x=alt.X("sum(mwh):Q", stack="zero", title=f"Répartition {title} (MWh) — Total {total:.0f}"),
+        color=alt.Color("segment:N", scale=alt.Scale(
+        domain=["Fixé existant","Nouveau clic","Restant après"],
+        range=["#22c55e","#3b82f6","#9ca3af"])),
+        tooltip=[alt.Tooltip("segment:N"), alt.Tooltip("mwh:Q", format=".0f", title="MWh")]
         ).properties(width="container")
         st.altair_chart(bar, use_container_width=True)
 
