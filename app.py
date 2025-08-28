@@ -28,6 +28,28 @@ tz_utc = pytz.UTC
 tz_be  = pytz.timezone("Europe/Brussels")
 client = EntsoePandasClient(api_key=TOKEN)
 
+# ===== DEBUG ENTSO-E =====
+st.markdown("**Diagnostic ENTSO-E** (temporaire)")
+try:
+    # bornes très petites pour limiter l'appel: J-2 -> J+1 en UTC
+    t0 = pd.Timestamp(END_INCLUSIVE, tz=tz_utc) - pd.Timedelta(days=2)
+    t1 = pd.Timestamp(END_INCLUSIVE, tz=tz_utc) + pd.Timedelta(days=1)
+
+    st.caption(f"Zone: {ZONE} | Token (masqué): {str(TOKEN)[:6]}… | "
+               f"t0={t0.strftime('%Y-%m-%d %H:%M %Z')} → t1={t1.strftime('%Y-%m-%d %H:%M %Z')}")
+
+    s = client.query_day_ahead_prices(ZONE, start=t0, end=t1)
+    st.success(f"Probe OK: {len(s)} points | "
+               f"{s.index.min().strftime('%Y-%m-%d %H:%M %Z')} → {s.index.max().strftime('%Y-%m-%d %H:%M %Z')}")
+except Exception as e:
+    # Si l'API répond, on essaye de sortir le code/texte
+    import traceback
+    st.error(f"Probe KO: {repr(e)}")
+    st.code("".join(traceback.format_exc()))
+    st.stop()
+# ===== FIN DEBUG =====
+
+
 # ----------------------------- Helpers
 def fmt_be(d) -> str:
     """Format JJ/MM/AAAA."""
