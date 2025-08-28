@@ -394,163 +394,106 @@ with st.container(border=True):
     st.caption(f"Calcul : {vol25:.0f} MWh × {px25:.2f} €/MWh = {_fmt_eur(bud25)}")
 # ===================== FIN =====================
 
+# ===================== SIMULATION D’IMPACT (PAR ANNÉE) =====================
+st.subheader("Simulation d’impact si je bloque aujourd’hui au CAL du jour")
 
-# ===================== DÉCIDEUR DE CLIC — IMPACT BUDGET =====================
-st.subheader("Décider un clic maintenant (par année)")
-
-# 0) S'assure d'avoir les CAL du jour disponibles ici
-cal_used = st.session_state.get("CAL_USED")
+# --- garde-fou CAL du jour
+cal_used = st.session_state.get("CAL_USED", {})
 cal_date = st.session_state.get("CAL_DATE", "—")
-if cal_used is None:
-    try:
-        _cal = fetch_flexypower_cals()
-    except Exception:
-        _cal = {"CAL-26": None, "CAL-27": None, "CAL-28": None, "date": None}
-    CAL_FALLBACK = {"CAL-26": 84.13, "CAL-27": 79.33, "CAL-28": 74.49}
-    cal_used = {
-        "y2026": _cal.get("CAL-26") or CAL_FALLBACK["CAL-26"],
-        "y2027": _cal.get("CAL-27") or CAL_FALLBACK["CAL-27"],
-        "y2028": _cal.get("CAL-28") or CAL_FALLBACK["CAL-28"],
-    }
-    cal_date = _cal.get("date") or "—"
-    st.session_state["CAL_USED"] = cal_used
-    st.session_state["CAL_DATE"] = cal_date
 
-# 1) Choix de la baseline pour comparer le clic
-def _safe_mean(series):
-    s = pd.to_numeric(series, errors="coerce")
-    return float(s.mean()) if len(s.dropna()) else None
+# --- prix de référence 2024/2025 (€/MWh) depuis la sidebar
+price_2024 = float(st.session_state.get("y2024__fixed_price", 0.0) or 0.0)
+price_2025 = float(st.session_state.get("y2025__fixed_price", 0.0) or 0.0)
 
-spot_avg_7  = _safe_mean(daily.sort_values("date")["avg"].iloc[-7:])  if not daily.empty and len(daily)>=7  else None
-spot_avg_30 = _safe_mean(daily.sort_values("date")["avg"].iloc[-30:]) if not daily.empty and len(daily)>=30 else None
-spot_avg_90 = _safe_mean(daily.sort_values("date")["avg"].iloc[-90:]) if not daily.empty and len(daily)>=90 else None
+def _fmt_eur(x, dec=0):
+    return f"{x:,.{dec}f} €".replace(",", " ")
 
-cbl1, cbl2, cbl3 = st.columns([1.2, 1, 1])
-with cbl1:
-    baseline_choice = st.selectbox(
-        "Comparer mon clic à…",
-        ["CAL du jour (delta = 0)", "Variable — moyenne 7j", "Variable — moyenne 30j", "Variable — moyenne 90j", "Mon scénario (€/MWh)"],
-        index=2
-    )
-with cbl2:
-    if baseline_choice == "Mon scénario (€/MWh)":
-        baseline_scenario = st.number_input("Prix scénario (€/MWh)", min_value=0.0, step=1.0, format="%.2f", key="baseline_scenario")
+def _state_for_year(ns: str):
+    """Récupère l'état de l'année : total, fixé (MWh / avg), restant, CAL du jour."""
+    total = float(st.session_state.get(f"{ns}__total_mwh", 0.0) or 0.0)
+    clicks = pd.DataFrame(st.session_state.get(f"{ns}__clicks", []))
+    if not clicks.empty:
+        clicks["volume"] = pd.to_numeric(clicks["volume"], errors="coerce").fillna(0.0)
+        clicks["price"]  = pd.to_numeric(clicks["price"],  errors="coerce").fillna(0.0)
+        fixed_mwh = float(clicks["volume"].sum())
+        avg_fixed = float((clicks["price"] * clicks["volume"]).sum() / fixed_mwh) if fixed_mwh > 0 else None
     else:
-        baseline_scenario = None
-with cbl3:
-    st.caption(f"Prix CAL du jour (source {cal_date}) — "
-               f"26: {cal_used['y2026']:.2f} €/MWh | 27: {cal_used['y2027']:.2f} €/MWh | 28: {cal_used['y2028']:.2f} €/MWh")
+        fixed_mwh, avg_fixed = 0.0, None
+    fixed_mwh = min(fixed_mwh, total) if total > 0 else 0.0
+    rest_mwh  = max(0.0, total - fixed_mwh)
+    cal_now   = float(cal_used.get(ns) or 0.0)
+    return total, fixed_mwh, avg_fixed, rest_mwh, cal_now
 
-def baseline_price():
-    if baseline_choice == "CAL du jour (delta = 0)":
-        return None  # on traitera “delta=0” année par année (CAL ≈ baseline)
-    if baseline_choice == "Variable — moyenne 7j":
-        return spot_avg_7
-    if baseline_choice == "Variable — moyenne 30j":
-        return spot_avg_30
-    if baseline_choice == "Variable — moyenne 90j":
-        return spot_avg_90
-    return baseline_scenario
+def render_sim(ns: str, label: str):
+    total, fixed_mwh, avg_fixed, rest_mwh, cal_now = _state_for_year(ns)
 
-# 2) Fonctions utilitaires
-def _fmt_eur(amount, dec=0):
-    if amount is None:
-        return "—"
-    s = f"{amount:,.{dec}f}".replace(",", " ")
-    return f"{s} €"
+    st.markdown(f"### {label} — volume restant **{rest_mwh:.0f} MWh** | CAL du jour **{cal_now:.2f} €/MWh** (source {cal_date})")
 
-def compute_state(ns: str):
-    total_key  = f"{ns}__total_mwh"
-    clicks_key = f"{ns}__clicks"
-    total_mwh  = float(st.session_state.get(total_key, 0.0))
-    df_clicks  = pd.DataFrame(st.session_state.get(clicks_key, []))
-    if not df_clicks.empty:
-        df_clicks["volume"] = pd.to_numeric(df_clicks["volume"], errors="coerce").fillna(0.0)
-        df_clicks["price"]  = pd.to_numeric(df_clicks["price"],  errors="coerce").fillna(0.0)
-    fixed_mwh = float(df_clicks["volume"].sum()) if not df_clicks.empty else 0.0
-    fixed_mwh = min(fixed_mwh, total_mwh) if total_mwh > 0 else 0.0
-    rest_mwh  = max(0.0, total_mwh - fixed_mwh)
-    avg_pond  = (df_clicks["price"] * df_clicks["volume"]).sum()/fixed_mwh if fixed_mwh > 0 else None
-    cal_now   = cal_used.get(ns)
-    return total_mwh, fixed_mwh, rest_mwh, avg_pond, cal_now
-
-def render_decider(ns: str, year_label: str):
-    total_mwh, fixed_mwh, rest_mwh, avg_pond, cal_now = compute_state(ns)
-
-    st.markdown(f"### {year_label} — volume restant **{rest_mwh:.0f} MWh**  |  CAL du jour **{(cal_now or 0):.2f} €/MWh**")
-
-    # Slider de décision
-    pct = st.slider(f"% du volume restant à cliquer ({year_label})", 0, 100, 25, 5, key=f"{ns}__decide_pct")
+    # slider : % du restant à bloquer aujourd'hui
+    pct = st.slider(f"% du volume restant à bloquer ({label})", 0, 100, 25, 5, key=f"{ns}__sim_pct")
     extra = rest_mwh * pct/100.0
 
-    # Avant clic (référence interne)
-    # Total estimé AVANT = (fixé × avg_pond) + (restant × CAL du jour)  -> projection interne
-    total_before = (avg_pond or 0.0) * fixed_mwh + (cal_now or 0.0) * rest_mwh
-    unit_before  = (total_before/total_mwh) if total_mwh > 0 else None
+    # --- AVANT clic (projection interne : fixé @avg_fixed, restant @cal_now)
+    budget_before = (avg_fixed or 0.0) * fixed_mwh + cal_now * rest_mwh
+    unit_before   = (budget_before / total) if total > 0 else None
 
-    # Après clic : on fixe 'extra' au CAL du jour
+    # --- APRÈS clic (on fixe 'extra' au CAL du jour, le reste du restant reste @cal_now)
     new_fixed_mwh   = fixed_mwh + extra
-    new_fixed_cost  = (avg_pond or 0.0) * fixed_mwh + (cal_now or 0.0) * extra
-    remaining_after = max(0.0, total_mwh - new_fixed_mwh)
-    projected_after = (cal_now or 0.0) * remaining_after
-    total_after     = new_fixed_cost + projected_after
-    unit_after      = (total_after/total_mwh) if total_mwh > 0 else None
+    new_fixed_cost  = (avg_fixed or 0.0) * fixed_mwh + cal_now * extra
+    remaining_after = max(0.0, total - new_fixed_mwh)
+    projected_after = cal_now * remaining_after
+    budget_after    = new_fixed_cost + projected_after
+    unit_after      = (budget_after / total) if total > 0 else None
 
-    # NB: si la projection utilise déjà le CAL du jour pour le restant, total_after == total_before (delta=0).
-    # Pour donner un "impact budget" intuitif, on compare le clic au PRIX DE BASELINE choisi.
-    base = baseline_price()  # peut être None (CAL du jour)
-    delta_vs_baseline = None
-    if extra > 0:
-        if base is None:
-            # baseline = CAL du jour => delta = 0 (on l'affiche clairement)
-            delta_vs_baseline = 0.0
-        else:
-            delta_vs_baseline = (cal_now - base) * extra if cal_now is not None else None
+    # --- Deltas (NB: si la projection utilise déjà CAL pour le restant, budget_after == budget_before)
+    delta_unit   = (unit_after - unit_before) if (unit_before is not None and unit_after is not None) else None
+    delta_budget = budget_after - budget_before
 
-    # Prix moyen du FIXÉ (utile quand on a déjà 100 MWh @ 95 et on clique à 80)
-    fixed_avg_before = avg_pond
-    fixed_avg_after  = None
-    if new_fixed_mwh > 0:
-        fixed_avg_after = ((avg_pond or 0.0) * fixed_mwh + (cal_now or 0.0) * extra) / new_fixed_mwh
+    # --- Comparaison vs budgets 2024 / 2025
+    # on compare en €/MWh d'abord, puis on multiplie par le volume de l'année simulée pour l’écart €.
+    comp = []
+    for ref_name, ref_price in [("2024", price_2024), ("2025", price_2025)]:
+        if ref_price > 0 and unit_after is not None:
+            delta_vs_ref_mwh = unit_after - ref_price
+            delta_vs_ref_eur = delta_vs_ref_mwh * total
+            comp.append((ref_name, delta_vs_ref_mwh, delta_vs_ref_eur))
 
-    # Affichage des impacts
-    c1, c2, c3, c4 = st.columns(4)
+    # --- Affichage KPIs
+    c1, c2, c3, c4 = st.columns([1,1,1,1])
     with c1:
-        st.metric("Nouveau prix moyen du contrat", f"{unit_after:.2f} €/MWh" if unit_after is not None else "—",
-                  delta=(f"{(unit_after - unit_before):+.2f} €/MWh" if (unit_after is not None and unit_before is not None) else None))
+        st.metric("Prix moyen du contrat (après clic)",
+                  f"{unit_after:.2f} €/MWh" if unit_after is not None else "—",
+                  delta=(f"{delta_unit:+.2f} €/MWh" if delta_unit is not None else None))
     with c2:
-        st.metric("Nouveau prix moyen du fixé", f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None else ("—" if fixed_avg_before is None else f"{fixed_avg_before:.2f} €/MWh"),
-                  delta=(f"{( (fixed_avg_after or fixed_avg_before) - (fixed_avg_before or 0) ):+.2f} €/MWh" if fixed_avg_before is not None and fixed_avg_after is not None else None))
+        st.metric("Budget total estimé (après clic)", _fmt_eur(budget_after),
+                  delta=( _fmt_eur(delta_budget) if delta_budget != 0 else "0 €"))
     with c3:
-        st.metric("Couverture après clic", f"{(new_fixed_mwh/total_mwh*100.0):.1f} %" if total_mwh>0 else "—",
-                  delta=(f"{(extra/total_mwh*100.0):+.1f} pts" if total_mwh>0 else None))
+        new_cover = (new_fixed_mwh/total*100.0) if total>0 else 0.0
+        st.metric("Couverture après clic", f"{new_cover:.1f} %",
+                  delta=(f"{(extra/total*100.0):+.1f} pts" if total>0 else None))
     with c4:
-        st.metric("Impact vs baseline choisie", _fmt_eur(delta_vs_baseline) if delta_vs_baseline is not None else "—",
-                  help=("Baseline = CAL du jour → delta 0 €" if base is None else
-                        f"Baseline = {base:.2f} €/MWh ; impact = {extra:.0f} MWh × ({(cal_now or 0):.2f} − {base:.2f})"))
+        if comp:
+            # on affiche vs l’année la plus récente dispo (priorité 2025 sinon 2024)
+            ref_name, d_mwh, d_eur = (comp[1] if len(comp)>1 else comp[0])
+            st.metric(f"Écart vs {ref_name}",
+                      f"{d_mwh:+.2f} €/MWh",
+                      help=f"= (Prix moyen après clic − Prix {ref_name}). Écart total ≈ { _fmt_eur(d_eur) }")
+        else:
+            st.metric("Écart vs 2024/2025", "—", help="Renseigne les prix 2024/2025 dans la barre latérale.")
 
-    # Micro-copie explicative
-    expl = []
-    expl.append(f"Avant clic : prix moyen contrat ≈ {unit_before:.2f} €/MWh" if unit_before is not None else "Avant clic : —")
-    if base is None:
-        expl.append("Baseline = CAL du jour → un clic déplace du 'projeté' vers du 'fixé' sans changer le total projeté.")
-    else:
-        expl.append(f"Baseline = {base:.2f} €/MWh (ex: variable {baseline_choice.lower()}).")
-    if fixed_avg_after is not None and fixed_avg_before is not None:
-        expl.append(f"Le prix moyen du **fixé** passe de {fixed_avg_before:.2f} à {fixed_avg_after:.2f} €/MWh "
-                    f"(car on ajoute {extra:.0f} MWh @ {(cal_now or 0):.2f}).")
-    st.caption(" • ".join(expl))
+    # Micro-explications
+    notes = []
+    notes.append(f"Avant clic : prix moyen ≈ {unit_before:.2f} €/MWh." if unit_before is not None else "Avant clic : —")
+    notes.append("En projection, le volume restant est valorisé au CAL du jour ; bloquer ‘extra’ MWh **ne change pas** le total projeté si le reste reste au même CAL.")
+    notes.append(f"Tu vois l’alignement vs **{('2025' if price_2025>0 else '2024')}** en €/MWh et en € (multiplié par le volume {label.lower()}).")
+    st.caption(" • ".join(notes))
 
-# 3) Rendu par année (onglets ou vertical selon ton choix)
-st.markdown("#### Simulation par année")
-coltabs = st.tabs(["2026", "2027", "2028"])
-with coltabs[0]:
-    render_decider("y2026", "2026")
-with coltabs[1]:
-    render_decider("y2027", "2027")
-with coltabs[2]:
-    render_decider("y2028", "2028")
-# ===================== FIN DÉCIDEUR DE CLIC =====================
+# ---- rendu onglets
+tabs = st.tabs(["2026", "2027", "2028"])
+with tabs[0]: render_sim("y2026", "2026")
+with tabs[1]: render_sim("y2027", "2027")
+with tabs[2]: render_sim("y2028", "2028")
+# ===================== FIN SIMULATION =====================
 
 
 # ===================== CONTRATS MULTI-MODULES (SIDEBAR + REGLAGES) =====================
