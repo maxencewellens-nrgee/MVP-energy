@@ -400,12 +400,41 @@ else:
         f"({_fmt_pct(d7)} sur 7 j ; {_fmt_pct(d30)} sur 30 j)."
     )
 
+# --- Garde-fou: s'assurer qu'on a bien les CAL du jour pour l'analyse narrative
+cal_used = st.session_state.get("CAL_USED")
+cal_date = st.session_state.get("CAL_DATE", "—")
+
+if cal_used is None:
+    # On tente de récupérer depuis FlexyPower (avec fallback)
+    try:
+        _cal = fetch_flexypower_cals()
+    except Exception:
+        _cal = {"CAL-26": None, "CAL-27": None, "CAL-28": None, "date": None}
+
+    CAL_FALLBACK = {"CAL-26": 84.13, "CAL-27": 79.33, "CAL-28": 74.49}
+    cal_used = {
+        "y2026": _cal.get("CAL-26") or CAL_FALLBACK["CAL-26"],
+        "y2027": _cal.get("CAL-27") or CAL_FALLBACK["CAL-27"],
+        "y2028": _cal.get("CAL-28") or CAL_FALLBACK["CAL-28"],
+    }
+    cal_date = _cal.get("date") or "—"
+
+    # On stocke pour que les autres sections puissent réutiliser
+    st.session_state["CAL_USED"] = cal_used
+    st.session_state["CAL_DATE"] = cal_date
+
+# Variables locales propres pour l'affichage
+cal_26 = cal_used.get("y2026")
+cal_27 = cal_used.get("y2027")
+cal_28 = cal_used.get("y2028")
+
 # --- 2) FORWARDS — niveaux du jour (source Flexy/équivalent)
-st.markdown("**Forwards** : "
-            f"CAL-26 **{(CAL_USED.get('y2026') or 0):.2f} €/MWh**, "
-            f"CAL-27 **{(CAL_USED.get('y2027') or 0):.2f} €/MWh**, "
-            f"CAL-28 **{(CAL_USED.get('y2028') or 0):.2f} €/MWh**"
-            + (f"  —  source {CAL_DATE}" if CAL_DATE else "")
+st.markdown(
+    f"**Forwards** : "
+    f"CAL-26 **{(cal_26 or 0):.2f} €/MWh**, "
+    f"CAL-27 **{(cal_27 or 0):.2f} €/MWh**, "
+    f"CAL-28 **{(cal_28 or 0):.2f} €/MWh**"
+    + (f"  —  source {cal_date}" if cal_date else "")
 )
 
 # --- 3) Facteurs probables (texte standardisé concis)
