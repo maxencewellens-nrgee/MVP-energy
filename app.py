@@ -37,24 +37,61 @@ def fmt_be(d) -> str:
 @st.cache_data(ttl=24*3600)
 def fetch_daily(start_date: str, end_inclusive_date: str) -> pd.DataFrame:
     """
-    Récupère prix day-ahead (heure) via entsoe-py, agrège en jour (avg/mn/mx/n) en heure BE.
-    start_date, end_inclusive_date: 'YYYY-MM-DD'. end est inclus (on ajoute +1 jour côté API).
+    Récupère les prix day-ahead (horaire) via entsoe-py, agrège en jour (avg/mn/mx/n).
+    IMPORTANT: ENTSO-E attend des timestamps en Europe/Brussels (CET/CEST), pas en UTC.
+    start_date, end_inclusive_date: 'YYYY-MM-DD' (end est inclus).
     """
-    start = pd.Timestamp(start_date, tz=tz_utc)
-    end   = pd.Timestamp(end_inclusive_date, tz=tz_utc) + pd.Timedelta(days=1)  # exclusif
-    months = pd.date_range(start.normalize(), end.normalize(), freq="MS", tz=tz_utc)
+    # 1) Timestamps en Europe/Brussels (CET/CEST)
+    start_be = pd.Timestamp(start_date, tz=tz_be).normalize()
+    end_be_excl = pd.Timestamp(end_inclusive_date, tz=tz_be).normalize() + pd.Timedelta(days=1)  # exclusif
+
+    # 2) Helper pour requêter une plage en gérant une éventuelle 400
+    def _fetch_range(t0_be: pd.Timestamp, t1_be: pd.Timestamp) -> pd.Series:
+        try:
+            return client.query_day_ahead_prices(ZONE, start=t0_be, end=t1_be)
+        except requests.HTTPError as e:
+            # fallback: on découpe en semaines si l'API est chatouilleuse
+            if e.response is not None and e.response.status_code == 400:
+                out = []
+                week_edges = pd.date_range(t0_be, t1_be, freq="7D", tz=tz_be)
+                if len(week_edges) == 0 or week_edges[0] != t0_be:
+                    week_edges = pd.DatetimeIndex([t0_be]).append(week_edges)
+                if len(week_edges) == 0 or week_edges[-1] != t1_be:
+                    week_edges = week_edges.append(pd.DatetimeIndex([t1_be]))
+                for i in range(len(week_edges) - 1):
+                    w0, w1 = week_edges[i], week_edges[i+1]
+                    s = client.query_day_ahead_prices(ZONE, start=w0, end=w1)
+                    out.append(s)
+                return pd.concat(out) if out else pd.Series(dtype=float)
+            raise
+
+    # 3) Requêtes par mois (robuste) en heure locale BE
+    month_edges = pd.date_range(start_be, end_be_excl, freq="MS", tz=tz_be)
+    if len(month_edges) == 0 or month_edges[0] != start_be:
+        month_edges = pd.DatetimeIndex([start_be]).append(month_edges)
+    if len(month_edges) == 0 or month_edges[-1] != end_be_excl:
+        month_edges = month_edges.append(pd.DatetimeIndex([end_be_excl]))
+
     series = []
-    for i, t0 in enumerate(months):
-        t1 = months[i+1] if i+1 < len(months) else end
-        s = client.query_day_ahead_prices(ZONE, start=t0, end=t1)
+    for i in range(len(month_edges) - 1):
+        t0, t1 = month_edges[i], month_edges[i+1]
+        s = _fetch_range(t0, t1)
         series.append(s)
+
+    if not series:
+        return pd.DataFrame(columns=["date", "avg", "mn", "mx", "n"])
+
     s_all = pd.concat(series).sort_index()
+    # entsoe-py renvoie déjà index tz-aware; on convertit en BE par sécurité
     s_all = s_all.tz_convert(tz_be)
-    df = s_all.to_frame("price").reset_index().rename(columns={"index":"ts"})
+
+    # 4) Agrégation journalière
+    df = s_all.to_frame("price").reset_index().rename(columns={"index": "ts"})
     df["date"] = df["ts"].dt.date
     out = df.groupby("date")["price"].agg(avg="mean", mn="min", mx="max", n="count").reset_index()
-    out[["avg","mn","mx"]] = out[["avg","mn","mx"]].round(2)
+    out[["avg", "mn", "mx"]] = out[["avg", "mn", "mx"]].round(2)
     return out
+
 
 def decision_from_last(daily: pd.DataFrame, lookback_days: int = 180) -> dict:
     """
