@@ -361,6 +361,37 @@ else:
     except Exception as e:
         st.warning(f"CAL FlexyPower indisponible : {e}")
 
+# ===================== RÉCAP CONTRATS PASSÉS (2024–2025) =====================
+st.subheader("Contrats passés — récapitulatif 2024 / 2025")
+
+def _fmt_eur(amount: float, dec: int = 0) -> str:
+    s = f"{amount:,.{dec}f}".replace(",", " ")
+    return f"{s} €"
+
+def render_past_contract_card(ns: str, title: str):
+    vol   = float(st.session_state.get(f"{ns}__fixed_volume", 0.0))
+    price = float(st.session_state.get(f"{ns}__fixed_price", 0.0))
+    # si le budget n'a pas encore été stocké par la sidebar, on le recalcule
+    budget = float(st.session_state.get(f"{ns}__fixed_budget", vol * price))
+
+    with st.container(border=True):
+        st.markdown(f"### {title}")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Volume", f"{vol:.0f} MWh")
+        c2.metric("Prix", f"{price:.2f} €/MWh")
+        c3.metric("Budget total", _fmt_eur(budget))
+        if vol > 0 and price > 0:
+            st.caption(f"Calcul : {vol:.0f} MWh × {price:.2f} €/MWh = {_fmt_eur(budget)}")
+        else:
+            st.caption("Renseignez le volume et le prix dans la barre latérale pour compléter ce contrat.")
+
+colA, colB = st.columns(2)
+with colA:
+    render_past_contract_card("y2024", "Contrat 2024 (fixe saisi)")
+with colB:
+    render_past_contract_card("y2025", "Contrat 2025 (fixe saisi)")
+# ===================== FIN RÉCAP CONTRATS PASSÉS =====================
+
 
 # ===================== DÉCIDEUR DE CLIC — IMPACT BUDGET =====================
 st.subheader("Décider un clic maintenant (par année)")
