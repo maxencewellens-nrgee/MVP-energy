@@ -394,19 +394,39 @@ with st.container(border=True):
     st.caption(f"Calcul : {vol25:.0f} MWh × {px25:.2f} €/MWh = {_fmt_eur(bud25)}")
 # ===================== FIN =====================
 
-# ===================== IMPACT SIMPLE (clair & court) =====================
-st.subheader("Impact si je fixe aujourd’hui (au CAL du jour)")
+# ===================== SIMULATION PAR MWh (onglets 2026/27/28) =====================
+st.subheader("Simuler un clic aujourd’hui (par MWh, au CAL du jour)")
 
-# --- Référence variable simple (moyenne spot 30 jours par défaut)
-df_sorted = daily.sort_values("date") if not daily.empty else pd.DataFrame()
-ref_var_30 = float(pd.to_numeric(df_sorted["avg"].iloc[-30:], errors="coerce").mean()) if len(df_sorted) >= 30 else None
-ref_label  = f"variable (moyenne 30 j ≈ {ref_var_30:.2f} €/MWh)" if ref_var_30 is not None else "variable (moyenne 30 j — n.d.)"
+# --- 0) Sécure : disposer des CAL du jour (et les mémoriser)
+def ensure_cal_used():
+    cal_used = st.session_state.get("CAL_USED")
+    cal_date = st.session_state.get("CAL_DATE")
+    if not cal_used:
+        try:
+            cal = fetch_flexypower_cals()  # renvoie {CAL-26, CAL-27, CAL-28, date}
+        except Exception:
+            cal = {"CAL-26": None, "CAL-27": None, "CAL-28": None, "date": None}
+        # Fallbacks raisonnables si la page source est KO
+        fallback = {"CAL-26": 82.61, "CAL-27": 77.82, "CAL-28": 74.38}
+        cal_used = {
+            "y2026": cal.get("CAL-26") or fallback["CAL-26"],
+            "y2027": cal.get("CAL-27") or fallback["CAL-27"],
+            "y2028": cal.get("CAL-28") or fallback["CAL-28"],
+        }
+        cal_date = cal.get("date") or pd.Timestamp.today().strftime("%d/%m/%Y")
+        st.session_state["CAL_USED"] = cal_used
+        st.session_state["CAL_DATE"] = cal_date
+    return cal_used, cal_date
 
-def _eur(x): return f"{x:,.0f} €".replace(",", " ")
+CAL_USED, CAL_DATE = ensure_cal_used()
 
-def _state(ns: str):
-    total   = float(st.session_state.get(f"{ns}__total_mwh", 0.0) or 0.0)
-    clicks  = pd.DataFrame(st.session_state.get(f"{ns}__clicks", []))
+# --- 1) utilitaires
+def _fmt_eur(x, dec=0): return f"{x:,.{dec}f} €".replace(",", " ")
+
+def _year_state(ns: str):
+    """Retourne total, fixed_mwh, avg_fixed, rest_mwh, cal_now."""
+    total = float(st.session_state.get(f"{ns}__total_mwh", 0.0) or 0.0)
+    clicks = pd.DataFrame(st.session_state.get(f"{ns}__clicks", []))
     if not clicks.empty:
         clicks["volume"] = pd.to_numeric(clicks["volume"], errors="coerce").fillna(0.0)
         clicks["price"]  = pd.to_numeric(clicks["price"],  errors="coerce").fillna(0.0)
@@ -416,72 +436,85 @@ def _state(ns: str):
         fixed_mwh, avg_fixed = 0.0, None
     fixed_mwh = min(fixed_mwh, total) if total > 0 else 0.0
     rest_mwh  = max(0.0, total - fixed_mwh)
-    cal_now   = float(st.session_state.get("CAL_USED", {}).get(ns) or 0.0)
+    cal_now   = float(CAL_USED.get(ns) or 0.0)
     return total, fixed_mwh, avg_fixed, rest_mwh, cal_now
 
-def render_year(ns: str, label: str):
-    total, fixed_mwh, avg_fixed, rest_mwh, cal_now = _state(ns)
+def render_year(ns: str, title: str):
+    total, fixed_mwh, avg_fixed, rest_mwh, cal_now = _year_state(ns)
 
     with st.container(border=True):
-        st.markdown(f"### {label} — restant **{rest_mwh:.0f} MWh** · CAL du jour **{cal_now:.2f} €/MWh**")
-        pct = st.slider(f"% du restant à fixer ({label})", 0, 100, 25, 5, key=f"{ns}__pct_simple")
-        extra = rest_mwh * pct/100.0
+        st.markdown(f"### {title} — restant **{rest_mwh:.0f} MWh** · CAL du jour **{cal_now:.2f} €/MWh** (source {CAL_DATE})")
 
-        # Avant (référence interne) : contrat mixé actuel (fixé @avg_fixed + restant @variable pour l'IMPACT)
-        # 1) Prix moyen du contrat AVANT si je reste variable sur tout le restant (ref_var_30)
-        unit_before = None
-        if total > 0 and ref_var_30 is not None:
-            unit_before = ((avg_fixed or 0.0) * fixed_mwh + ref_var_30 * rest_mwh) / total
+        # --- Slider en MWh (pas en %) : borné sur le restant
+        extra = st.slider(
+            f"MWh à fixer aujourd’hui ({title})",
+            min_value=0.0, max_value=float(rest_mwh), step=1.0, value=float(min(rest_mwh, max(rest_mwh*0.25, 0))),
+            key=f"{ns}__mw_click"
+        )
 
-        # Après : je fixe 'extra' au CAL, le reste du restant reste variable (ref_var_30)
+        # --- Avant (projection interne : fixé @avg_fixed, restant @CAL)
+        budget_before = (avg_fixed or 0.0) * fixed_mwh + cal_now * rest_mwh
+        unit_before   = (budget_before / total) if total > 0 else None
+
+        # --- Après (on fixe 'extra' au CAL du jour, le reste reste au CAL du jour)
         new_fixed_mwh   = fixed_mwh + extra
         new_fixed_cost  = (avg_fixed or 0.0) * fixed_mwh + cal_now * extra
         remaining_after = max(0.0, total - new_fixed_mwh)
-        var_cost_after  = (ref_var_30 or 0.0) * remaining_after
-        budget_after    = new_fixed_cost + var_cost_after
+        projected_after = cal_now * remaining_after
+        budget_after    = new_fixed_cost + projected_after
         unit_after      = (budget_after / total) if total > 0 else None
 
-        # Prix moyen du fixé après clic
-        fixed_avg_after = None
-        if new_fixed_mwh > 0:
-            fixed_avg_after = ((avg_fixed or 0.0) * fixed_mwh + cal_now * extra) / new_fixed_mwh
-
-        # Impact budget vs rester 100% variable sur le restant (delta €)
-        budget_before = None
-        delta_budget  = None
-        if ref_var_30 is not None:
-            budget_before = (avg_fixed or 0.0) * fixed_mwh + ref_var_30 * rest_mwh
-            delta_budget  = budget_after - budget_before  # + = plus cher que rester variable ; − = économie
+        # Prix moyen du FIXÉ après clic
+        fixed_avg_after = ((avg_fixed or 0.0) * fixed_mwh + cal_now * extra) / new_fixed_mwh if new_fixed_mwh > 0 else None
 
         # KPIs
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         with c1:
-            st.metric("Prix moyen du contrat (après clic)", f"{unit_after:.2f} €/MWh" if unit_after is not None else "—",
+            st.metric("Prix moyen contrat (après clic)",
+                      f"{unit_after:.2f} €/MWh" if unit_after is not None else "—",
                       delta=(f"{(unit_after - unit_before):+.2f} €/MWh" if unit_before is not None and unit_after is not None else None))
         with c2:
-            st.metric("Prix moyen du fixé (après clic)", f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh"),
+            st.metric("Prix moyen du fixé (après clic)",
+                      f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh"),
                       delta=(f"{( (fixed_avg_after or avg_fixed) - (avg_fixed or 0) ):+.2f} €/MWh" if fixed_avg_after is not None and avg_fixed is not None else None))
         with c3:
-            st.metric(f"Impact vs {ref_label}", _eur(delta_budget) if delta_budget is not None else "—")
+            cover_after = (new_fixed_mwh/total*100.0) if total>0 else 0.0
+            st.metric("Couverture (après clic)", f"{cover_after:.1f} %",
+                      delta=(f"{(extra/total*100.0):+.1f} pts" if total>0 else None))
+        with c4:
+            delta_budget = budget_after - budget_before
+            st.metric("Budget total estimé (après clic)",
+                      _fmt_eur(budget_after),
+                      delta=( _fmt_eur(delta_budget) if abs(delta_budget) >= 0.5 else "0 €"))
 
-        # Phrase-synthèse ultra courte
-        new_cover = (new_fixed_mwh/total*100.0) if total>0 else 0.0
-        synth = []
-        if unit_before is not None and unit_after is not None:
-            synth.append(f"prix moyen contrat **{unit_before:.2f} → {unit_after:.2f} €/MWh**")
-        if avg_fixed is not None and fixed_avg_after is not None:
-            synth.append(f"fixé **{avg_fixed:.2f} → {fixed_avg_after:.2f} €/MWh**")
-        synth.append(f"couverture **{(fixed_mwh/total*100 if total>0 else 0):.1f}% → {new_cover:.1f}%**")
-        st.caption(" · ".join(synth) + (f" · réf variable = {ref_var_30:.2f} €/MWh" if ref_var_30 is not None else ""))
+        # --- Barre horizontale : fixé / clic simulé / restant après
+        seg = pd.DataFrame({
+            "segment": ["Fixé existant", "Nouveau clic", "Restant après"],
+            "mwh":     [fixed_mwh,       extra,          remaining_after]
+        })
+        bar = alt.Chart(seg).mark_bar(height=20).encode(
+            x=alt.X("sum(mwh):Q", stack="zero", title=f"Répartition {title} (MWh) — Total {total:.0f}"),
+            color=alt.Color("segment:N", scale=alt.Scale(
+                domain=["Fixé existant","Nouveau clic","Restant après"],
+                range=["#22c55e","#3b82f6","#9ca3af"])),
+            tooltip=[alt.Tooltip("segment:N"), alt.Tooltip("mwh:Q", format=".0f", title="MWh")]
+        ).properties(width="container")
+        st.altair_chart(bar, use_container_width=True)
 
-# Onglets minimalistes
-t1, t2, t3 = st.tabs(["2026", "2027", "2028"])
-with t1: render_year("y2026", "2026")
-with t2: render_year("y2027", "2027")
-with t3: render_year("y2028", "2028")
-# ===================== FIN IMPACT SIMPLE =====================
+        # Micro-rappel logique (pédago)
+        st.caption(
+            "Le budget projeté valorise déjà le **restant** au **CAL du jour** ; "
+            "fixer aujourd’hui **déplace** du ‘projeté’ vers du ‘fixé’. "
+            "L’effet le plus visible est sur **le prix moyen du fixé** et la **couverture**."
+        )
 
-
+# --- 3 onglets (comme demandé)
+tabs = st.tabs(["2026", "2027", "2028"])
+with tabs[0]: render_year("y2026", "2026")
+with tabs[1]: render_year("y2027", "2027")
+with tabs[2]: render_year("y2028", "2028")
+    
+# ===================== FIN SIMULATION PAR MWh =====================
 
 # ===================== CONTRATS MULTI-MODULES (SIDEBAR + REGLAGES) =====================
 
