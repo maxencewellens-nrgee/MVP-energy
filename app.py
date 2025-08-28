@@ -195,40 +195,6 @@ end_input   = END_INCLUSIVE
 lookback    = LOOKBACK_DAYS
 run_market  = False  # plus de bouton; chargement auto géré dans le bloc suivant
 
-# ===== DEBUG ENTSO-E (placer après END_INCLUSIVE / START_HISTORY) =====
-st.markdown("**Diagnostic ENTSO-E** (temporaire)")
-
-try:
-    # Petite fenêtre autour de END_INCLUSIVE (J-2 → J+1) en UTC
-    t0 = pd.Timestamp(END_INCLUSIVE, tz=tz_utc) - pd.Timedelta(days=2)
-    t1 = pd.Timestamp(END_INCLUSIVE, tz=tz_utc) + pd.Timedelta(days=1)
-
-    st.caption(
-        f"Zone: {ZONE} | Token (masqué): {str(TOKEN)[:6]}… | "
-        f"t0={t0.strftime('%Y-%m-%d %H:%M %Z')} → t1={t1.strftime('%Y-%m-%d %H:%M %Z')}"
-    )
-
-    s = client.query_day_ahead_prices(ZONE, start=t0, end=t1)
-    st.success(
-        f"Probe OK: {len(s)} points | "
-        f"{s.index.min().strftime('%Y-%m-%d %H:%M %Z')} → {s.index.max().strftime('%Y-%m-%d %H:%M %Z')}"
-    )
-
-except Exception as e:
-    # Affiche un maximum d'info utile sans faire planter l'app
-    st.error(f"Probe KO: {type(e).__name__}: {e}")
-    try:
-        import traceback, requests
-        if isinstance(e, requests.HTTPError) and e.response is not None:
-            st.code(f"HTTP {e.response.status_code}\n{e.response.text[:800]}")
-        else:
-            st.code("".join(traceback.format_exc()))
-    except Exception:
-        pass
-    st.stop()
-# ===== FIN DEBUG =====
-
-
 # ----------------------------- Marché : chargement & affichage (AUTO)
 def load_market(start_date: str, end_date: str):
     with st.spinner("Récupération ENTSO-E (par mois)…"):
@@ -527,17 +493,20 @@ def render_year(ns: str, title: str):
         fixed_avg_after = ((avg_fixed or 0.0) * fixed_mwh + cal_now * extra) / new_fixed_mwh if new_fixed_mwh > 0 else None
 
         # KPIs
-        c1, c2, c3 = st.columns(3)
-       
+        c1, c2, c3, c4 = st.columns(4)
         with c1:
-            st.metric("Prix d'achat moyen (après clic)",
+            st.metric("Prix moyen contrat (après clic)",
+                      f"{unit_after:.2f} €/MWh" if unit_after is not None else "—",
+                      delta=(f"{(unit_after - unit_before):+.2f} €/MWh" if unit_before is not None and unit_after is not None else None))
+        with c2:
+            st.metric("Prix moyen du fixé (après clic)",
                       f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh"),
                       delta=(f"{( (fixed_avg_after or avg_fixed) - (avg_fixed or 0) ):+.2f} €/MWh" if fixed_avg_after is not None and avg_fixed is not None else None))
-        with c2:
+        with c3:
             cover_after = (new_fixed_mwh/total*100.0) if total>0 else 0.0
             st.metric("Couverture (après clic)", f"{cover_after:.1f} %",
                       delta=(f"{(extra/total*100.0):+.1f} pts" if total>0 else None))
-        with c3:
+        with c4:
             delta_budget = budget_after - budget_before
             st.metric("Budget total estimé (après clic)",
                       _fmt_eur(budget_after),
