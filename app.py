@@ -492,22 +492,41 @@ def render_year(ns: str, title: str):
         # Prix moyen du FIXÉ après clic
         fixed_avg_after = ((avg_fixed or 0.0) * fixed_mwh + cal_now * extra) / new_fixed_mwh if new_fixed_mwh > 0 else None
 
-        # KPIs
-        c1, c2, c3 = st.columns(3)
-       
-        with c1:
-            st.metric("Prix d'achat moyen (après clic)",
-                      f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh"),
-                      delta=(f"{( (fixed_avg_after or avg_fixed) - (avg_fixed or 0) ):+.2f} €/MWh" if fixed_avg_after is not None and avg_fixed is not None else None))
-        with c2:
-            cover_after = (new_fixed_mwh/total*100.0) if total>0 else 0.0
-            st.metric("Couverture (après clic)", f"{cover_after:.1f} %",
-                      delta=(f"{(extra/total*100.0):+.1f} pts" if total>0 else None))
-        with c3:
-            delta_budget = budget_after - budget_before
-            st.metric("Budget total estimé (après clic)",
-                      _fmt_eur(budget_after),
-                      delta=( _fmt_eur(delta_budget) if abs(delta_budget) >= 0.5 else "0 €"))
+        # === KPIs
+c1, c2, c3 = st.columns(3)
+
+# 1) Prix d'achat moyen — vert si ça BAISSE
+with c1:
+    delta_price = None
+    if fixed_avg_after is not None and avg_fixed is not None:
+        delta_price = fixed_avg_after - avg_fixed  # baisse => vert (inverse)
+
+    st.metric(
+        "Prix d'achat moyen (après clic)",
+        f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None
+        else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh"),
+        delta=(f"{delta_price:+.2f} €/MWh" if delta_price is not None else None),
+        delta_color="inverse",  # inverse = vert si négatif
+    )
+
+# 2) Couverture — vert si ça MONTE (normal)
+with c2:
+    cover_after = (new_fixed_mwh / total * 100.0) if total > 0 else 0.0
+    delta_cov = (extra / total * 100.0) if total > 0 else None
+    st.metric(
+        "Couverture (après clic)",
+        f"{cover_after:.1f} %",
+        delta=(f"{delta_cov:+.1f} pts" if delta_cov is not None else None),
+        delta_color="normal",
+    )
+
+# 3) Budget total estimé — PAS de delta
+with c3:
+    st.metric(
+        "Budget total estimé (après clic)",
+        _fmt_eur(budget_after)
+        # pas de delta ici
+    )
 
         # --- Barre horizontale (fixé / clic / restant)
         seg = pd.DataFrame({
