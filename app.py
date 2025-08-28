@@ -14,7 +14,7 @@ import urllib.parse
 
 # ----------------------------- Configuration
 st.set_page_config(page_title="MVP Énergie — BE Day-Ahead", layout="wide")
-st.title("Gestion contrat futur, Recommandation & Prise de décision")
+st.title("Gérer mes contrats; recommandations & prise de décision")
 
 # ----------------------------- Secrets / Token
 TOKEN = st.secrets.get("ENTSOE_TOKEN", "")
@@ -209,7 +209,6 @@ else:
     st.subheader("Historique prix marché électricité")
 
 # ===================== Graphique interactif BE spot =====================
-st.subheader("Moyenne 30-60-90 jours")
 
 mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
 
