@@ -352,6 +352,99 @@ else:
     except Exception as e:
         st.warning(f"CAL FlexyPower indisponible : {e}")
 
+# ===================== Analyse marché (auto) =====================
+st.subheader("Analyse marché (auto)")
+
+def _pct(a, b):
+    try:
+        if b == 0 or pd.isna(a) or pd.isna(b): return None
+        return (a/b - 1.0) * 100.0
+    except Exception:
+        return None
+
+def summarize_trend(daily: pd.DataFrame, lookback_days: int = 180):
+    if daily.empty or len(daily) < 8:
+        return {"text":"Données insuffisantes pour analyser la tendance.", "reco": None}
+
+    df = daily.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values("date")
+    last = float(df.iloc[-1]["avg"])
+
+    # Variations J-7 / J-30 (sur valeur, pas moyenne)
+    v7  = float(df.iloc[-8]["avg"])  if len(df) >= 8  else None
+    v30 = float(df.iloc[-31]["avg"]) if len(df) >= 31 else None
+    pct7  = _pct(last, v7)  if v7  is not None else None
+    pct30 = _pct(last, v30) if v30 is not None else None
+
+    # “vitesse” courte: moyenne 7j vs moyenne des 7j précédents
+    if len(df) >= 14:
+        m7_now  = df["avg"].iloc[-7:].mean()
+        m7_prev = df["avg"].iloc[-14:-7].mean()
+        pct_m7  = _pct(m7_now, m7_prev)
+    else:
+        pct_m7 = None
+
+    # Signal quantiles (ta fonction existante)
+    sig = decision_from_last(df, lookback_days=lookback_days)
+
+    # Texte tendance
+    t_parts = []
+    t_parts.append(f"Dernier spot BE : **{last:.2f} €/MWh**.")
+    if pct7 is not None:
+        t_parts.append(f"Sur 7 jours : **{'+' if pct7>=0 else ''}{pct7:.1f}%**.")
+    if pct30 is not None:
+        t_parts.append(f"Sur 30 jours : **{'+' if pct30>=0 else ''}{pct30:.1f}%**.")
+    if pct_m7 is not None:
+        sens = "accélère" if pct_m7 and pct_m7 > 0 else "ralentit"
+        t_parts.append(f"La dynamique courte (7j vs 7j précédents) {sens} ({'+' if (pct_m7 or 0)>=0 else ''}{(pct_m7 or 0):.1f}%).")
+
+    trend_text = " ".join(t_parts)
+
+    # Interprétation standardisée (non causale forte, mais guides usuels)
+    drivers = (
+        "• **Gaz TTF** : tension haussière → transmission sur l’électricité.\n"
+        "• **CO₂ EUA** : hausse = renchérit le thermique.\n"
+        "• **Météo/éolien** : moins de vent/soleil → plus de thermique.\n"
+        "• **Parc / maintenance** : moindre disponibilité nucléaire/CCGT → prix plus élevés."
+    )
+
+    # Implications opérationnelles (soft) selon quantiles
+    # sig['reco'] ∈ {FIXER 40–60 %, FIXER 20–30 %, ATTENDRE, ATTENDRE (clairement)}
+    reco_soft = f"Signal quantiles : **{sig['reco']}** — {sig['raison']}"
+    # Lien vers CAL utilisés
+    try:
+        cal_26 = CAL_USED.get("y2026"); cal_27 = CAL_USED.get("y2027"); cal_28 = CAL_USED.get("y2028")
+        cal_line = f"Références forwards : CAL-26 **{cal_26:.2f}** €/MWh, CAL-27 **{cal_27:.2f}** €/MWh, CAL-28 **{cal_28:.2f}** €/MWh (source {CAL_DATE})."
+    except Exception:
+        cal_line = "Références forwards non disponibles."
+
+    # Recommandation orientée décision (verbage prudent)
+    if "FIXER" in sig["reco"]:
+        action_line = ("Dans ce contexte, **sécuriser une tranche** (par ex. 20–30 %) sur 2026/2027 peut réduire l'exposition "
+                       "si la tendance haussière persiste. Prioriser 2026 si la visibilité court terme t'inquiète, "
+                       "et lisser sur 2027/2028.")
+    else:
+        action_line = ("Tendance sans signal fort ou baissière : **privilégier l’étalement** (petits clics espacés) "
+                       "et surveiller un retour vers des zones P30/P10 avant de renforcer.")
+
+    return {
+        "trend_text": trend_text,
+        "drivers": drivers,
+        "reco_soft": reco_soft,
+        "cal_line": cal_line,
+        "action_line": action_line,
+        "sig": sig,
+    }
+
+ana = summarize_trend(daily, lookback_days=LOOKBACK_DAYS)
+
+# Rendu
+st.info(ana["trend_text"])
+st.markdown("**Facteurs de marché à surveiller (explication standardisée)** :\n" + ana["drivers"])
+st.markdown("**Implications couverture** :\n- " + ana["reco_soft"] + "\n- " + ana["cal_line"] + "\n- " + ana["action_line"])
+
+
 # ===================== CONTRATS MULTI-MODULES (SIDEBAR + REGLAGES) =====================
 
 # 1) Récup prix CAL depuis la synthèse (fallback si indispo)
