@@ -493,20 +493,17 @@ def render_year(ns: str, title: str):
         fixed_avg_after = ((avg_fixed or 0.0) * fixed_mwh + cal_now * extra) / new_fixed_mwh if new_fixed_mwh > 0 else None
 
         # KPIs
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3 = st.columns(3)
+       
         with c1:
-            st.metric("Prix moyen contrat (après clic)",
-                      f"{unit_after:.2f} €/MWh" if unit_after is not None else "—",
-                      delta=(f"{(unit_after - unit_before):+.2f} €/MWh" if unit_before is not None and unit_after is not None else None))
-        with c2:
             st.metric("Prix moyen du fixé (après clic)",
                       f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh"),
                       delta=(f"{( (fixed_avg_after or avg_fixed) - (avg_fixed or 0) ):+.2f} €/MWh" if fixed_avg_after is not None and avg_fixed is not None else None))
-        with c3:
+        with c2:
             cover_after = (new_fixed_mwh/total*100.0) if total>0 else 0.0
             st.metric("Couverture (après clic)", f"{cover_after:.1f} %",
                       delta=(f"{(extra/total*100.0):+.1f} pts" if total>0 else None))
-        with c4:
+        with c3:
             delta_budget = budget_after - budget_before
             st.metric("Budget total estimé (après clic)",
                       _fmt_eur(budget_after),
