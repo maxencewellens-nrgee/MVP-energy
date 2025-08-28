@@ -361,37 +361,38 @@ else:
     except Exception as e:
         st.warning(f"CAL FlexyPower indisponible : {e}")
 
-# ================= Récapitulatif contrats passés (2024 / 2025) =================
-# --- Récapitulatif contrats passés (2024 / 2025)
-st.markdown("### Contrats passés — récapitulatif 2024 / 2025")
+# ===================== RÉCAP CONTRATS PASSÉS (bandes horizontales) =====================
+st.subheader("Contrats passés — récapitulatif 2024 / 2025")
 
-# Récupération des inputs (issus de la sidebar)
-volume_2024 = st.session_state.get("y2024__fixed_volume", 0.0)
-prix_2024   = st.session_state.get("y2024__fixed_price", 0.0)
-budget_2024 = volume_2024 * prix_2024
+def _fmt_eur(val, dec=0):
+    return f"{val:,.{dec}f} €".replace(",", " ")
 
-volume_2025 = st.session_state.get("y2025__fixed_volume", 0.0)
-prix_2025   = st.session_state.get("y2025__fixed_price", 0.0)
-budget_2025 = volume_2025 * prix_2025
+def _get(ns):
+    vol   = float(st.session_state.get(f"{ns}__fixed_volume", 0.0))
+    prix  = float(st.session_state.get(f"{ns}__fixed_price", 0.0))
+    budget = vol * prix
+    return vol, prix, budget
 
-# Deux cartes horizontales
-col1, col2 = st.columns(2)
+# ----- Bande 2024
+vol24, px24, bud24 = _get("y2024")
+with st.container(border=True):
+    st.markdown("**Récap contrat 2024**")
+    c1, c2, c3 = st.columns([1,1,1])
+    with c1: st.metric("Volume", f"{vol24:.0f} MWh")
+    with c2: st.metric("Prix", f"{px24:.2f} €/MWh")
+    with c3: st.metric("Budget total", _fmt_eur(bud24))
+    st.caption(f"Calcul : {vol24:.0f} MWh × {px24:.2f} €/MWh = {_fmt_eur(bud24)}")
 
-with col1:
-    with st.container(border=True):
-        st.markdown("#### Contrat 2024 (fixe saisi)")
-        st.metric("Volume", f"{volume_2024:.0f} MWh")
-        st.metric("Prix", f"{prix_2024:.2f} €/MWh")
-        st.metric("Budget total", f"{budget_2024:,.0f} €")
-        st.caption(f"Calcul : {volume_2024:.0f} MWh × {prix_2024:.2f} €/MWh = {budget_2024:,.0f} €")
-
-with col2:
-    with st.container(border=True):
-        st.markdown("#### Contrat 2025 (fixe saisi)")
-        st.metric("Volume", f"{volume_2025:.0f} MWh")
-        st.metric("Prix", f"{prix_2025:.2f} €/MWh")
-        st.metric("Budget total", f"{budget_2025:,.0f} €")
-        st.caption(f"Calcul : {volume_2025:.0f} MWh × {prix_2025:.2f} €/MWh = {budget_2025:,.0f} €")
+# ----- Bande 2025
+vol25, px25, bud25 = _get("y2025")
+with st.container(border=True):
+    st.markdown("**Récap contrat 2025**")
+    c1, c2, c3 = st.columns([1,1,1])
+    with c1: st.metric("Volume", f"{vol25:.0f} MWh")
+    with c2: st.metric("Prix", f"{px25:.2f} €/MWh")
+    with c3: st.metric("Budget total", _fmt_eur(bud25))
+    st.caption(f"Calcul : {vol25:.0f} MWh × {px25:.2f} €/MWh = {_fmt_eur(bud25)}")
+# ===================== FIN =====================
 
 
 # ===================== DÉCIDEUR DE CLIC — IMPACT BUDGET =====================
