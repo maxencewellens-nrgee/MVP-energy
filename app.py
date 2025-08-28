@@ -279,20 +279,6 @@ st.altair_chart(chart, use_container_width=True)
 last_visible_date = vis["date"].max()
 st.caption(f"Dernière donnée spot : {fmt_be(last_visible_date)} • Fuseau : Europe/Brussels")
 
-# ----------------------------- Carte Décision du jour (quantiles)
-if not daily.empty:
-    dec = decision_from_last(daily, LOOKBACK_DAYS)
-    with st.container(border=True):
-        st.markdown("### Décision du jour")
-        c1, c2 = st.columns([1.2, 2])
-        with c1:
-            st.metric("Recommandation", dec["reco"])
-            st.metric("Dernier spot", price_eur_mwh(dec["last"]) if dec["last"] is not None else "—")
-        with c2:
-            st.write(dec["raison"])
-            st.caption(f"Références : P10 {price_eur_mwh(dec['p10']) if dec['p10'] is not None else '—'} • "
-                       f"P30 {price_eur_mwh(dec['p30']) if dec['p30'] is not None else '—'} • "
-                       f"P70 {price_eur_mwh(dec['p70']) if dec['p70'] is not None else '—'}")
 
 # ----------------------------- Synthèse (unique)
 st.subheader("Synthèse Prix Spot et Forward")
