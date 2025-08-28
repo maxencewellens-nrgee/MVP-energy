@@ -482,18 +482,28 @@ def render_year(ns: str, title: str):
         unit_before   = (budget_before / total) if total > 0 else None
 
         # --- APRÈS (on fixe 'extra' au CAL, le reste du restant reste @CAL)
-              # === KPIs (sans "prix moyen du contrat")
-        # Deltas
+                   # === KPIs (simplifiés : fixé / couverture / budget) ===================
+        # (re)calculs sûrs nécessaires aux deltas
+        new_fixed_mwh = fixed_mwh + extra
+        fixed_avg_after = None
+        if new_fixed_mwh > 0:
+            # moyenne pondérée du FIXÉ après le clic
+            fixed_cost_before = (avg_fixed or 0.0) * fixed_mwh
+            fixed_avg_after = (fixed_cost_before + cal_now * extra) / new_fixed_mwh
+
+        cover_after = (new_fixed_mwh / total * 100.0) if total > 0 else 0.0
+
+        # deltas
         delta_fixed = None
         if fixed_avg_after is not None and avg_fixed is not None:
-            delta_fixed = fixed_avg_after - avg_fixed  # plus bas = mieux
+            delta_fixed = fixed_avg_after - avg_fixed   # plus bas = mieux
 
         delta_cov  = (extra / total * 100.0) if total > 0 else None
-        delta_budg = budget_after - budget_before     # si tu veux "plus bas = mieux" => inverse
+        delta_budg = budget_after - budget_before      # si tu veux "plus bas = mieux" => inverse
 
         c1, c2, c3 = st.columns(3)
 
-        # 1) Prix moyen du fixé — on préfère PLUS BAS => delta_color="inverse"
+        # 1) Prix moyen du FIXÉ — on préfère PLUS BAS => delta_color="inverse"
         with c1:
             st.metric(
                 "Prix moyen du fixé (après clic)",
@@ -504,9 +514,8 @@ def render_year(ns: str, title: str):
                 help="Moyenne pondérée sur les volumes déjà verrouillés uniquement."
             )
 
-        # 2) Couverture — on préfère PLUS HAUT => delta_color par défaut ("normal")
+        # 2) Couverture — on préfère PLUS HAUT => couleur normale
         with c2:
-            cover_after = (new_fixed_mwh / total * 100.0) if total > 0 else 0.0
             st.metric(
                 "Couverture (après clic)",
                 f"{cover_after:.1f} %",
@@ -514,7 +523,7 @@ def render_year(ns: str, title: str):
                 delta_color="normal"
             )
 
-        # 3) Budget total estimé — si tu considères qu'un budget plus BAS est mieux => "inverse"
+        # 3) Budget total estimé — si tu considères qu'un budget plus BAS est mieux => 'inverse'
         with c3:
             st.metric(
                 "Budget total estimé (après clic)",
@@ -522,6 +531,7 @@ def render_year(ns: str, title: str):
                 delta=(_fmt_eur(delta_budg) if abs(delta_budg) >= 0.5 else "0 €"),
                 delta_color="inverse"
             )
+
 
 # --- 3 onglets (on conserve la structure actuelle)
 tabs = st.tabs(["2026", "2027", "2028"])
