@@ -669,29 +669,30 @@ def render_contract_module(title: str, ns: str):
                   help="Forward utilisé pour estimer le budget restant.")
         st.progress(min(cov_pct/100.0, 1.0), text=f"Couverture {cov_pct:.1f}%")
 
-                # --- (B) Budget (FIXÉ uniquement — volume, budget, prix moyen €/kWh)
-        # Calcule *strictement* sur les clics déjà fixés
+        # --- (B) Budget (FIXÉ uniquement — volume, budget, prix moyen €/MWh)
+        # Calcule STRICTEMENT sur les clics déjà fixés (sans tenir compte du restant ni du CAL)
         if not df_clicks.empty and fixed_mwh > 0:
-            total_cost_fixed = float((df_clicks["price"] * df_clicks["volume"]).sum())   # € = (€/MWh * MWh)
-            avg_fixed_mwh    = float(total_cost_fixed / fixed_mwh)                      # €/MWh
-            avg_fixed_kwh    = avg_fixed_mwh / 1000.0                                   # €/kWh
+            total_cost_fixed = float((df_clicks["price"] * df_clicks["volume"]).sum())   # € = (€/MWh × MWh)
+            avg_fixed_mwh    = float(total_cost_fixed / fixed_mwh)                       # €/MWh
         else:
             total_cost_fixed = 0.0
             avg_fixed_mwh    = None
-            avg_fixed_kwh    = None
 
         with st.container(border=True):
             st.markdown("#### Budget (déjà fixé)")
-            b1, b2, b3 = st.columns([1, 1, 1])
-
-            b1.metric("Volume fixé", f"{fixed_mwh:.0f} MWh")
-            b2.metric("Prix moyen fixé",(f"{avg_fixed_kwh:.3f} €/kWh" if avg_fixed_kwh is not None else "—"),help="Prix moyen pondéré des clics converti en €/kWh (€/MWh ÷ 1000).")
-            b3.metric("Budget fixé", _fmt_eur(total_cost_fixed))
+            c1, c2, c3 = st.columns([1, 1, 1])
+            c1.metric("Volume fixé", f"{fixed_mwh:.0f} MWh")
+            c2.metric("Budget fixé", _fmt_eur(total_cost_fixed))
+            c3.metric("Prix moyen fixé", f"{avg_fixed_mwh:.2f} €/MWh" if avg_fixed_mwh is not None else "—")
 
             if avg_fixed_mwh is not None:
-                st.caption(f"Équivaut à **{avg_fixed_mwh:.2f} €/MWh** (= {avg_fixed_kwh:.3f} €/kWh).")
+                st.caption(
+                    f"Calcul : Σ(Volume × Prix) / Volume fixé = {avg_fixed_mwh:.2f} €/MWh "
+                    f"(Σ = {_fmt_eur(total_cost_fixed)}, Volume = {fixed_mwh:.0f} MWh)."
+                )
             else:
                 st.caption("Aucun clic enregistré pour l’instant (prix moyen du fixé indisponible).")
+
 
 
         # --- (C) Ajouter un clic
