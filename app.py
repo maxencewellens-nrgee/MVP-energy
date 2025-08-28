@@ -530,10 +530,7 @@ with c4:
     )
 
         # --- Barre horizontale (fixé / clic / restant)
-        seg = pd.DataFrame({
-            "segment": ["Fixé existant", "Nouveau clic", "Restant après"],
-            "mwh":     [fixed_mwh,       extra,          remaining_after]
-        })
+        seg = pd.DataFrame({"segment": ["Fixé existant", "Nouveau clic", "Restant après"],"mwh":[fixed_mwh, extra,remaining_after]})
         bar = alt.Chart(seg).mark_bar(height=20).encode(
             x=alt.X("sum(mwh):Q", stack="zero", title=f"Répartition {title} (MWh) — Total {total:.0f}"),
             color=alt.Color("segment:N", scale=alt.Scale(
