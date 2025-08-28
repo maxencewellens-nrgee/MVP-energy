@@ -507,7 +507,6 @@ def render_year(ns: str, title: str):
             delta_budget = budget_after - budget_before
             st.metric("Budget total estimé (après clic)",
                       _fmt_eur(budget_after),
-                      delta=( _fmt_eur(delta_budget) if abs(delta_budget) >= 0.5 else "0 €"))
 
         # --- Barre horizontale (fixé / clic / restant)
         seg = pd.DataFrame({
