@@ -669,20 +669,26 @@ def render_contract_module(title: str, ns: str):
                   help="Forward utilisé pour estimer le budget restant.")
         st.progress(min(cov_pct/100.0, 1.0), text=f"Couverture {cov_pct:.1f}%")
 
-        # --- (B) Budget (FIXÉ uniquement — pas de projeté ici)
-        # (on ne montre plus ni budget restant, ni budget total, ni coût unitaire estimé)
+        # --- (B) Budget (FIXÉ uniquement — + prix moyen en €/kWh)
         budget_fixe = (fixed_mwh * (avg_pond or 0.0)) if fixed_mwh > 0 else 0.0
+        avg_pond_kwh = (avg_pond / 1000.0) if avg_pond is not None else None  # conversion MWh -> kWh
 
         with st.container(border=True):
             st.markdown("#### Budget (déjà fixé)")
-            b1, b2 = st.columns([1, 1])
+            b1, b2, b3 = st.columns([1, 1, 1])
             b1.metric("Volume fixé", f"{fixed_mwh:.0f} MWh")
             b2.metric("Budget fixé", _fmt_eur(budget_fixe))
+            b3.metric(
+                "Prix moyen fixé",
+                f"{avg_pond_kwh:.3f} €/kWh" if avg_pond_kwh is not None else "—",
+                help="Prix moyen pondéré des clics converti en €/kWh (€/MWh ÷ 1000)."
+            )
 
             if avg_pond is not None:
-                st.caption(f"Prix moyen pondéré du fixé : **{avg_pond:.2f} €/MWh**.")
+                st.caption(f"Équivaut à **{avg_pond:.2f} €/MWh** (= {avg_pond_kwh:.3f} €/kWh).")
             else:
                 st.caption("Aucun clic enregistré pour l’instant (prix moyen du fixé indisponible).")
+
 
         # --- (C) Ajouter un clic
         with st.container(border=True):
