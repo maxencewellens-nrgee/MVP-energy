@@ -361,160 +361,97 @@ else:
     except Exception as e:
         st.warning(f"CAL FlexyPower indisponible : {e}")
 
-# ===================== ANALYSE NARRATIVE + WHAT-IF (sans réf T-7) =====================
-st.subheader("Analyse marché & impact si je clique maintenant")
+# ===================== Analyse marché (auto) =====================
+st.subheader("Analyse marché (auto)")
 
-# --- Helpers
 def _pct(a, b):
     try:
-        if b is None or b == 0: return None
+        if b == 0 or pd.isna(a) or pd.isna(b): return None
         return (a/b - 1.0) * 100.0
     except Exception:
         return None
 
-def _fmt_pct(x):
-    return "—" if x is None else f"{x:+.1f}%"
+def summarize_trend(daily: pd.DataFrame, lookback_days: int = 180):
+    if daily.empty or len(daily) < 8:
+        return {"text":"Données insuffisantes pour analyser la tendance.", "reco": None}
 
-def _fmt_eur(amount, dec=0):
-    s = f"{amount:,.{dec}f}".replace(",", " ")
-    return f"{s} €"
+    df = daily.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values("date")
+    last = float(df.iloc[-1]["avg"])
 
-def _safe_mean(series):
-    s = pd.to_numeric(series, errors="coerce")
-    return float(s.mean()) if len(s.dropna()) else None
+    # Variations J-7 / J-30 (sur valeur, pas moyenne)
+    v7  = float(df.iloc[-8]["avg"])  if len(df) >= 8  else None
+    v30 = float(df.iloc[-31]["avg"]) if len(df) >= 31 else None
+    pct7  = _pct(last, v7)  if v7  is not None else None
+    pct30 = _pct(last, v30) if v30 is not None else None
 
-# --- 1) SPOT – résumé
-if daily.empty or len(daily) < 8:
-    st.info("Données insuffisantes pour la narration automatique.")
-else:
-    dfm = daily.copy().sort_values("date")
-    last = float(dfm.iloc[-1]["avg"])
-    v7   = float(dfm.iloc[-8]["avg"])  if len(dfm) >= 8  else None
-    v30  = float(dfm.iloc[-31]["avg"]) if len(dfm) >= 31 else None
-    d7   = _pct(last, v7)
-    d30  = _pct(last, v30)
-    tone = "plonge" if (d7 is not None and d7 <= -15) else ("grimpe" if (d7 is not None and d7 >= 15) else "évolue")
+    # “vitesse” courte: moyenne 7j vs moyenne des 7j précédents
+    if len(df) >= 14:
+        m7_now  = df["avg"].iloc[-7:].mean()
+        m7_prev = df["avg"].iloc[-14:-7].mean()
+        pct_m7  = _pct(m7_now, m7_prev)
+    else:
+        pct_m7 = None
 
-    st.info(
-        f"**Spot BE** : {tone} à **{last:.2f} €/MWh** "
-        f"({_fmt_pct(d7)} sur 7 j ; {_fmt_pct(d30)} sur 30 j)."
+    # Signal quantiles (ta fonction existante)
+    sig = decision_from_last(df, lookback_days=lookback_days)
+
+    # Texte tendance
+    t_parts = []
+    t_parts.append(f"Dernier spot BE : **{last:.2f} €/MWh**.")
+    if pct7 is not None:
+        t_parts.append(f"Sur 7 jours : **{'+' if pct7>=0 else ''}{pct7:.1f}%**.")
+    if pct30 is not None:
+        t_parts.append(f"Sur 30 jours : **{'+' if pct30>=0 else ''}{pct30:.1f}%**.")
+    if pct_m7 is not None:
+        sens = "accélère" if pct_m7 and pct_m7 > 0 else "ralentit"
+        t_parts.append(f"La dynamique courte (7j vs 7j précédents) {sens} ({'+' if (pct_m7 or 0)>=0 else ''}{(pct_m7 or 0):.1f}%).")
+
+    trend_text = " ".join(t_parts)
+
+    # Interprétation standardisée (non causale forte, mais guides usuels)
+    drivers = (
+        "• **Gaz TTF** : tension haussière → transmission sur l’électricité.\n"
+        "• **CO₂ EUA** : hausse = renchérit le thermique.\n"
+        "• **Météo/éolien** : moins de vent/soleil → plus de thermique.\n"
+        "• **Parc / maintenance** : moindre disponibilité nucléaire/CCGT → prix plus élevés."
     )
 
-# --- Garde-fou: s'assurer qu'on a bien les CAL du jour pour l'analyse narrative
-cal_used = st.session_state.get("CAL_USED")
-cal_date = st.session_state.get("CAL_DATE", "—")
-
-if cal_used is None:
-    # On tente de récupérer depuis FlexyPower (avec fallback)
+    # Implications opérationnelles (soft) selon quantiles
+    # sig['reco'] ∈ {FIXER 40–60 %, FIXER 20–30 %, ATTENDRE, ATTENDRE (clairement)}
+    reco_soft = f"Signal quantiles : **{sig['reco']}** — {sig['raison']}"
+    # Lien vers CAL utilisés
     try:
-        _cal = fetch_flexypower_cals()
+        cal_26 = CAL_USED.get("y2026"); cal_27 = CAL_USED.get("y2027"); cal_28 = CAL_USED.get("y2028")
+        cal_line = f"Références forwards : CAL-26 **{cal_26:.2f}** €/MWh, CAL-27 **{cal_27:.2f}** €/MWh, CAL-28 **{cal_28:.2f}** €/MWh (source {CAL_DATE})."
     except Exception:
-        _cal = {"CAL-26": None, "CAL-27": None, "CAL-28": None, "date": None}
+        cal_line = "Références forwards non disponibles."
 
-    CAL_FALLBACK = {"CAL-26": 84.13, "CAL-27": 79.33, "CAL-28": 74.49}
-    cal_used = {
-        "y2026": _cal.get("CAL-26") or CAL_FALLBACK["CAL-26"],
-        "y2027": _cal.get("CAL-27") or CAL_FALLBACK["CAL-27"],
-        "y2028": _cal.get("CAL-28") or CAL_FALLBACK["CAL-28"],
+    # Recommandation orientée décision (verbage prudent)
+    if "FIXER" in sig["reco"]:
+        action_line = ("Dans ce contexte, **sécuriser une tranche** (par ex. 20–30 %) sur 2026/2027 peut réduire l'exposition "
+                       "si la tendance haussière persiste. Prioriser 2026 si la visibilité court terme t'inquiète, "
+                       "et lisser sur 2027/2028.")
+    else:
+        action_line = ("Tendance sans signal fort ou baissière : **privilégier l’étalement** (petits clics espacés) "
+                       "et surveiller un retour vers des zones P30/P10 avant de renforcer.")
+
+    return {
+        "trend_text": trend_text,
+        "drivers": drivers,
+        "reco_soft": reco_soft,
+        "cal_line": cal_line,
+        "action_line": action_line,
+        "sig": sig,
     }
-    cal_date = _cal.get("date") or "—"
 
-    # On stocke pour que les autres sections puissent réutiliser
-    st.session_state["CAL_USED"] = cal_used
-    st.session_state["CAL_DATE"] = cal_date
+ana = summarize_trend(daily, lookback_days=LOOKBACK_DAYS)
 
-# Variables locales propres pour l'affichage
-cal_26 = cal_used.get("y2026")
-cal_27 = cal_used.get("y2027")
-cal_28 = cal_used.get("y2028")
-
-# --- 2) FORWARDS — niveaux du jour (source Flexy/équivalent)
-st.markdown(
-    f"**Forwards** : "
-    f"CAL-26 **{(cal_26 or 0):.2f} €/MWh**, "
-    f"CAL-27 **{(cal_27 or 0):.2f} €/MWh**, "
-    f"CAL-28 **{(cal_28 or 0):.2f} €/MWh**"
-    + (f"  —  source {cal_date}" if cal_date else "")
-)
-
-# --- 3) Facteurs probables (texte standardisé concis)
-st.markdown(
-    "**Pourquoi ça bouge (pistes usuelles)** : "
-    "Gaz TTF (coût marginal), CO₂ EUA (coût thermique), météo/éolien (mix), disponibilité nucléaire/CCGT."
-)
-
-# --- 4) WHAT-IF — impact si je clique maintenant
-st.markdown("### Impact budget si je clique maintenant")
-
-# Choix baseline Variable
-colb1, colb2 = st.columns([1, 2])
-with colb1:
-    baseline_window = st.selectbox("Réf. Variable (moyenne spot)", ["7 jours", "30 jours", "90 jours"], index=1)
-window_map = {"7 jours": 7, "30 jours": 30, "90 jours": 90}
-win = window_map[baseline_window]
-
-var_benchmark = None
-if not daily.empty and len(daily) >= win:
-    var_benchmark = _safe_mean(daily.sort_values("date")["avg"].iloc[-win:])
-
-st.caption(
-    "Comparaison : cliquer au **CAL du jour** vs rester **100 % variable** "
-    + (f"(réf = moyenne {baseline_window.lower()} ≈ {var_benchmark:.2f} €/MWh)." if var_benchmark is not None else "(réf variable indisponible).")
-)
-
-def impact_click(ns: str, year_label: str):
-    total_key   = f"{ns}__total_mwh"
-    clicks_key  = f"{ns}__clicks"
-
-    total_mwh = float(st.session_state.get(total_key, 0.0))
-    df_clicks = pd.DataFrame(st.session_state.get(clicks_key, []))
-    if not df_clicks.empty:
-        df_clicks["volume"] = pd.to_numeric(df_clicks["volume"], errors="coerce").fillna(0.0)
-        df_clicks["price"]  = pd.to_numeric(df_clicks["price"],  errors="coerce").fillna(0.0)
-
-    fixed_mwh = float(df_clicks["volume"].sum()) if not df_clicks.empty else 0.0
-    fixed_mwh = min(fixed_mwh, total_mwh) if total_mwh > 0 else 0.0
-    rest_mwh  = max(0.0, total_mwh - fixed_mwh)
-    avg_pond  = (df_clicks["price"] * df_clicks["volume"]).sum()/fixed_mwh if fixed_mwh > 0 else None
-
-    cal_now = CAL_USED.get(ns)
-
-    st.markdown(
-        f"**{year_label}** — volume restant : **{rest_mwh:.0f} MWh**  |  CAL du jour : **{(cal_now or 0):.2f} €/MWh**"
-    )
-
-    # Slider: % du restant à cliquer
-    pct = st.slider(f"% du restant à cliquer ({year_label})", 0, 100, 25, 5, key=f"{ns}__whatif_pct")
-    extra = rest_mwh * pct/100.0
-
-    # (A) Impact vs Variable (si benchmark dispo)
-    delta_vs_var = None
-    if var_benchmark is not None and extra > 0 and cal_now is not None:
-        delta_vs_var = (cal_now - var_benchmark) * extra  # + = plus cher que variable ; - = économie vs variable
-
-    # Nouveau prix moyen estimé après clic (mix fixé existant + clic + restant au CAL)
-    new_fixed_mwh = fixed_mwh + extra
-    new_fixed_cost = (avg_pond * fixed_mwh if avg_pond is not None else 0.0) + (cal_now or 0.0) * extra
-    remaining_after = total_mwh - new_fixed_mwh
-    projected_cost_after = (cal_now or 0.0) * max(0.0, remaining_after)
-    total_after = new_fixed_cost + projected_cost_after
-    unit_after = total_after/total_mwh if total_mwh > 0 else None
-
-    colA, colB = st.columns(2)
-    with colA:
-        st.metric("Impact vs Variable", ("—" if delta_vs_var is None else _fmt_eur(delta_vs_var)))
-    with colB:
-        st.metric("Prix moyen estimé du contrat (après clic)", (f"{unit_after:.2f} €/MWh" if unit_after is not None else "—"))
-
-    if delta_vs_var is not None:
-        st.caption(f"(vs Variable) {pct}% du restant × ({(cal_now or 0):.2f} − {var_benchmark:.2f}) €/MWh")
-
-st.markdown("**What-if par année**")
-impact_click("y2026", "2026")
-impact_click("y2027", "2027")
-impact_click("y2028", "2028")
-# ===================== FIN ANALYSE NARRATIVE + WHAT-IF =====================
-
+# Rendu
+st.info(ana["trend_text"])
+st.markdown("**Facteurs de marché à surveiller (explication standardisée)** :\n" + ana["drivers"])
+st.markdown("**Implications couverture** :\n- " + ana["reco_soft"] + "\n- " + ana["cal_line"] + "\n- " + ana["action_line"])
 
 
 # ===================== CONTRATS MULTI-MODULES (SIDEBAR + REGLAGES) =====================
@@ -726,5 +663,3 @@ with tab2028:
 # ===================== FIN CONTRATS MULTI-MODULES =====================
 
 # ===================== FIN CONTRATS MULTI-MODULES =====================
-
-
