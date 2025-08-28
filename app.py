@@ -353,7 +353,7 @@ else:
     except Exception as e:
         st.warning(f"CAL FlexyPower indisponible : {e}")
 
-# ===================== CONTRATS MULTI-MODULES (REFONTE UX) =====================
+# ===================== CONTRATS MULTI-MODULES (SIDEBAR + REGLAGES) =====================
 
 # 1) Récup prix CAL depuis la synthèse (fallback si indispo)
 try:
@@ -369,44 +369,63 @@ CAL_USED = {
 }
 CAL_DATE = _cal.get("date") or "—"
 
+YEARS = [("y2026", "2026"), ("y2027", "2027"), ("y2028", "2028")]
+
 def _fmt_eur(amount: float, dec: int = 0) -> str:
     s = f"{amount:,.{dec}f}".replace(",", " ")
     return f"{s} €"
 
-def render_contract_module(title: str, ns: str, default_total: float = 200.0, default_max_clicks: int = 5):
+# 2) INIT des clés + PANNEAU LATERAL (réglages par année)
+st.sidebar.header("Paramètres contrat")
+for ns, y in YEARS:
+    total_key = f"{ns}__total_mwh"
+    max_key   = f"{ns}__max_clicks"
+    clicks_key= f"{ns}__clicks"
+    init_key  = f"{ns}__initialized"
+
+    # init une seule fois
+    if init_key not in st.session_state:
+        st.session_state[total_key]  = 200.0
+        st.session_state[max_key]    = 5
+        st.session_state[clicks_key] = []
+        st.session_state[init_key]   = True
+
+    with st.sidebar.expander(f"Contrat {y}", expanded=(ns == "y2026")):
+        st.number_input(
+            "Volume total (MWh)",
+            min_value=0.0, step=5.0, format="%.0f",
+            key=total_key,
+            help="Volume du contrat pour l’année."
+        )
+        st.number_input(
+            "Clics max autorisés",
+            min_value=1, max_value=20, step=1, format="%d",
+            key=max_key,
+            help="Limite de clics pour l’année."
+        )
+        st.caption(f"CAL-{y[-2:]} utilisé ({CAL_DATE}) : {CAL_USED[ns]:.2f} €/MWh")
+
+# 3) MODULE PAR ANNEE (lit les réglages depuis la sidebar)
+def render_contract_module(title: str, ns: str):
     with st.container(border=True):
         st.subheader(title)
 
-        # ---------- Clés uniques
+        # --- Clés/état
         total_key   = f"{ns}__total_mwh"
-        clicks_key  = f"{ns}__clicks"
         max_key     = f"{ns}__max_clicks"
-        init_key    = f"{ns}__initialized"
-
+        clicks_key  = f"{ns}__clicks"
         date_key    = f"{ns}__new_click_date"
         price_key   = f"{ns}__new_click_price"
         vol_key     = f"{ns}__new_click_volume"
         add_btn     = f"{ns}__btn_add_click"
-
         del_select  = f"{ns}__delete_click_selector"
         del_btn     = f"{ns}__btn_delete_click"
         dl_btn      = f"{ns}__dl_csv"
 
-        # ---------- INIT
-        if init_key not in st.session_state:
-            st.session_state[total_key]  = float(default_total)
-            st.session_state[clicks_key] = []
-            st.session_state[max_key]    = int(default_max_clicks)
-            st.session_state[init_key]   = True
-
-        # ---------- (A) SYNTHÈSE & COUVERTURE
-        total_mwh = st.number_input(
-            "Volume total (MWh)",
-            min_value=0.0, step=5.0, format="%.0f", key=total_key,
-        )
-
-        clicks = st.session_state.get(clicks_key, [])
-        df_clicks = pd.DataFrame(clicks)
+        total_mwh  = float(st.session_state.get(total_key, 0.0))
+        max_clicks = int(st.session_state.get(max_key, 5))
+        clicks     = st.session_state.get(clicks_key, [])
+        df_clicks  = pd.DataFrame(clicks)
 
         # types sûrs
         if not df_clicks.empty:
@@ -414,53 +433,47 @@ def render_contract_module(title: str, ns: str, default_total: float = 200.0, de
             df_clicks["price"]  = pd.to_numeric(df_clicks["price"],  errors="coerce").fillna(0.0)
 
         fixed_mwh = float(df_clicks["volume"].sum()) if not df_clicks.empty else 0.0
-        fixed_mwh = min(fixed_mwh, float(total_mwh)) if total_mwh > 0 else 0.0
-        rest_mwh  = max(0.0, float(total_mwh) - fixed_mwh)
+        fixed_mwh = min(fixed_mwh, total_mwh) if total_mwh > 0 else 0.0
+        rest_mwh  = max(0.0, total_mwh - fixed_mwh)
         cov_pct   = round((fixed_mwh / total_mwh * 100.0), 2) if total_mwh > 0 else 0.0
 
         avg_simple = round(float(df_clicks["price"].mean()), 2) if not df_clicks.empty else None
-        avg_pond   = round(( (df_clicks["price"] * df_clicks["volume"]).sum() / fixed_mwh ), 2) if fixed_mwh > 0 else None
+        avg_pond   = round(((df_clicks["price"]*df_clicks["volume"]).sum()/fixed_mwh), 2) if fixed_mwh > 0 else None
+        cal_price  = CAL_USED.get(ns)
 
-        cal_price = CAL_USED.get(ns)  # prix forward pour l’année du module
-
+        # --- (A) Synthèse
         c1, c2, c3, c4, c5 = st.columns([1,1,1,1,1.2])
-        c1.metric("Volume total", f"{total_mwh:.0f} MWh")
+        c1.metric("Volume total", f"{total_mwh:.0f} MWh", help="Modifiable dans la barre latérale.")
         c2.metric("Déjà fixé", f"{fixed_mwh:.0f} MWh")
         c3.metric("Restant", f"{rest_mwh:.0f} MWh")
         c4.metric("Couverture", f"{cov_pct:.1f} %")
-        c5.metric(
-            f"CAL utilisé ({CAL_DATE})",
-            f"{cal_price:.2f} €/MWh" if cal_price is not None else "—",
-            help="Forward utilisé pour estimer le budget restant."
-        )
-
+        c5.metric(f"CAL utilisé ({CAL_DATE})", f"{cal_price:.2f} €/MWh" if cal_price is not None else "—",
+                  help="Forward utilisé pour estimer le budget restant.")
         st.progress(min(cov_pct/100.0, 1.0), text=f"Couverture {cov_pct:.1f}%")
 
-        # ---------- (B) BUDGET — carte unique
-        # Budget fixé = fixed_mwh × avg_pond ; Budget restant = rest_mwh × cal_price
-        budget_fixe   = (fixed_mwh * avg_pond) if avg_pond is not None else 0.0
-        budget_restant= rest_mwh * float(cal_price or 0.0)
-        budget_total  = budget_fixe + budget_restant
-        unit_cost     = (budget_total / total_mwh) if total_mwh > 0 else None
+        # --- (B) Budget (carte unique)
+        budget_fixe    = (fixed_mwh * avg_pond) if avg_pond is not None else 0.0
+        budget_restant = rest_mwh * float(cal_price or 0.0)
+        budget_total   = budget_fixe + budget_restant
+        unit_cost      = (budget_total / total_mwh) if total_mwh > 0 else None
 
         with st.container(border=True):
-            st.markdown("#### Budget (mise à jour auto)")
+            st.markdown("#### Budget")
             b1, b2, b3, b4 = st.columns([1,1,1,1])
             b1.metric("Budget fixé", _fmt_eur(budget_fixe))
             b2.metric("Budget restant projeté", _fmt_eur(budget_restant))
             b3.metric("Budget total estimé", _fmt_eur(budget_total))
             b4.metric("Coût unitaire estimé", f"{unit_cost:.2f} €/MWh" if unit_cost is not None else "—")
 
-            st.caption(
-                ("• Fixé = "
-                 f"{fixed_mwh:.0f} MWh × {avg_pond:.2f} €/MWh  |  "
-                 "• Restant = "
-                 f"{rest_mwh:.0f} MWh × {cal_price:.2f} €/MWh")
-                if avg_pond is not None else
-                (f"• Restant = {rest_mwh:.0f} MWh × {cal_price:.2f} €/MWh")
-            )
+            if avg_pond is not None:
+                st.caption(
+                    f"• Fixé = {fixed_mwh:.0f} MWh × {avg_pond:.2f} €/MWh  |  "
+                    f"• Restant = {rest_mwh:.0f} MWh × {cal_price:.2f} €/MWh"
+                )
+            else:
+                st.caption(f"• Restant = {rest_mwh:.0f} MWh × {cal_price:.2f} €/MWh")
 
-        # ---------- (C) ACTION — Ajouter un clic (formulaire compact)
+        # --- (C) Ajouter un clic
         with st.container(border=True):
             st.markdown("#### Ajouter un clic")
             col1, col2, col3, col4 = st.columns([1, 1, 1, 0.8])
@@ -475,7 +488,8 @@ def render_contract_module(title: str, ns: str, default_total: float = 200.0, de
                 add_click = st.button("➕ Ajouter", key=add_btn, use_container_width=True)
 
             used_clicks = len(clicks)
-            max_clicks = st.session_state[max_key]
+            st.caption(f"Clics utilisés : {used_clicks}/{max_clicks} (modifiable dans la barre latérale).")
+
             if add_click:
                 if used_clicks >= int(max_clicks):
                     st.error(f"Limite atteinte ({int(max_clicks)} clics).")
@@ -490,10 +504,7 @@ def render_contract_module(title: str, ns: str, default_total: float = 200.0, de
                         st.session_state.pop(k, None)
                     st.rerun()
 
-            # micro-indication
-            st.caption(f"Clics utilisés : {used_clicks}/{int(max_clicks)}.")
-
-        # ---------- (D) HISTORIQUE — Expander
+        # --- (D) Historique (expander)
         with st.expander("Clics enregistrés", expanded=not df_clicks.empty):
             if df_clicks.empty:
                 st.caption("Aucun clic pour l’instant.")
@@ -504,9 +515,7 @@ def render_contract_module(title: str, ns: str, default_total: float = 200.0, de
                     lambda v: round((v / total_mwh * 100.0), 2) if total_mwh > 0 else 0.0
                 )
                 df_disp = df_disp.rename(columns={
-                    "date": "Date",
-                    "price": "Prix (€/MWh)",
-                    "volume": "Volume (MWh)",
+                    "date": "Date", "price": "Prix (€/MWh)", "volume": "Volume (MWh)",
                 })[["Date", "Prix (€/MWh)", "Volume (MWh)", "% du total"]]
                 df_disp.index = range(1, len(df_disp) + 1)
                 df_disp.index.name = "Clic #"
@@ -539,9 +548,10 @@ def render_contract_module(title: str, ns: str, default_total: float = 200.0, de
                         use_container_width=True
                     )
 
-# ======= Appel des trois modules (2026, 2027, 2028) =======
+# ======= Rendu des trois modules =======
 render_contract_module("Couverture du contrat 2026", ns="y2026")
 render_contract_module("Couverture du contrat 2027", ns="y2027")
 render_contract_module("Couverture du contrat 2028", ns="y2028")
 # ===================== FIN CONTRATS MULTI-MODULES =====================
+
 
