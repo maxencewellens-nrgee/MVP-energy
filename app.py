@@ -547,10 +547,19 @@ def render_contract_module(title: str, ns: str):
                         use_container_width=True
                     )
 
-# ======= Rendu des trois modules =======
-render_contract_module("Couverture du contrat 2026", ns="y2026")
-render_contract_module("Couverture du contrat 2027", ns="y2027")
-render_contract_module("Couverture du contrat 2028", ns="y2028")
+# ======= Rendu avec des onglets =======
+tab2026, tab2027, tab2028 = st.tabs(["Contrat 2026", "Contrat 2027", "Contrat 2028"])
+
+with tab2026:
+    render_contract_module("Couverture du contrat 2026", ns="y2026")
+
+with tab2027:
+    render_contract_module("Couverture du contrat 2027", ns="y2027")
+
+with tab2028:
+    render_contract_module("Couverture du contrat 2028", ns="y2028")
+# ===================== FIN CONTRATS MULTI-MODULES =====================
+
 # ===================== FIN CONTRATS MULTI-MODULES =====================
 
 
