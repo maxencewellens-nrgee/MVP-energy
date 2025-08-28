@@ -525,28 +525,27 @@ with c3:
     st.metric(
         "Budget total estimé (après clic)",
         _fmt_eur(budget_after)
-        # pas de delta ici
     )
 
-        # --- Barre horizontale (fixé / clic / restant)
-        seg = pd.DataFrame({
-            "segment": ["Fixé existant", "Nouveau clic", "Restant après"],
-            "mwh":     [fixed_mwh,       extra,          remaining_after]
-        })
-        bar = alt.Chart(seg).mark_bar(height=20).encode(
-            x=alt.X("sum(mwh):Q", stack="zero", title=f"Répartition {title} (MWh) — Total {total:.0f}"),
-            color=alt.Color("segment:N", scale=alt.Scale(
-                domain=["Fixé existant","Nouveau clic","Restant après"],
-                range=["#22c55e","#3b82f6","#9ca3af"])),
-            tooltip=[alt.Tooltip("segment:N"), alt.Tooltip("mwh:Q", format=".0f", title="MWh")]
-        ).properties(width="container")
-        st.altair_chart(bar, use_container_width=True)
+# --- Barre horizontale (fixé / clic / restant) — À L'EXTÉRIEUR des colonnes !
+seg = pd.DataFrame({
+    "segment": ["Fixé existant", "Nouveau clic", "Restant après"],
+    "mwh":     [fixed_mwh,       extra,          remaining_after]
+})
+bar = alt.Chart(seg).mark_bar(height=20).encode(
+    x=alt.X("sum(mwh):Q", stack="zero", title=f"Répartition {title} (MWh) — Total {total:.0f}"),
+    color=alt.Color("segment:N", scale=alt.Scale(
+        domain=["Fixé existant","Nouveau clic","Restant après"],
+        range=["#22c55e","#3b82f6","#9ca3af"])),
+    tooltip=[alt.Tooltip("segment:N"), alt.Tooltip("mwh:Q", format=".0f", title="MWh")]
+).properties(width="container")
+st.altair_chart(bar, use_container_width=True)
 
-        st.caption(
-            "Le budget projeté valorise déjà le **restant** au **CAL du jour** ; "
-            "cliquer aujourd’hui **déplace** du ‘projeté’ vers du ‘fixé’. "
-            "L’impact visible est surtout sur le **prix moyen du fixé** et la **couverture**."
-        )
+st.caption(
+    "Le budget projeté valorise déjà le **restant** au **CAL du jour** ; "
+    "cliquer aujourd’hui **déplace** du ‘projeté’ vers du ‘fixé’. "
+    "L’impact visible est surtout sur le **prix moyen du fixé** et la **couverture**."
+)
 
 # --- 3 onglets (on conserve la structure actuelle)
 tabs = st.tabs(["2026", "2027", "2028"])
