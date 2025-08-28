@@ -195,6 +195,40 @@ end_input   = END_INCLUSIVE
 lookback    = LOOKBACK_DAYS
 run_market  = False  # plus de bouton; chargement auto géré dans le bloc suivant
 
+# ===== DEBUG ENTSO-E (placer après END_INCLUSIVE / START_HISTORY) =====
+st.markdown("**Diagnostic ENTSO-E** (temporaire)")
+
+try:
+    # Petite fenêtre autour de END_INCLUSIVE (J-2 → J+1) en UTC
+    t0 = pd.Timestamp(END_INCLUSIVE, tz=tz_utc) - pd.Timedelta(days=2)
+    t1 = pd.Timestamp(END_INCLUSIVE, tz=tz_utc) + pd.Timedelta(days=1)
+
+    st.caption(
+        f"Zone: {ZONE} | Token (masqué): {str(TOKEN)[:6]}… | "
+        f"t0={t0.strftime('%Y-%m-%d %H:%M %Z')} → t1={t1.strftime('%Y-%m-%d %H:%M %Z')}"
+    )
+
+    s = client.query_day_ahead_prices(ZONE, start=t0, end=t1)
+    st.success(
+        f"Probe OK: {len(s)} points | "
+        f"{s.index.min().strftime('%Y-%m-%d %H:%M %Z')} → {s.index.max().strftime('%Y-%m-%d %H:%M %Z')}"
+    )
+
+except Exception as e:
+    # Affiche un maximum d'info utile sans faire planter l'app
+    st.error(f"Probe KO: {type(e).__name__}: {e}")
+    try:
+        import traceback, requests
+        if isinstance(e, requests.HTTPError) and e.response is not None:
+            st.code(f"HTTP {e.response.status_code}\n{e.response.text[:800]}")
+        else:
+            st.code("".join(traceback.format_exc()))
+    except Exception:
+        pass
+    st.stop()
+# ===== FIN DEBUG =====
+
+
 # ----------------------------- Marché : chargement & affichage (AUTO)
 def load_market(start_date: str, end_date: str):
     with st.spinner("Récupération ENTSO-E (par mois)…"):
