@@ -445,12 +445,15 @@ def _year_state(ns: str):
 
 # --- 2) Rendu par année
 def render_year(ns: str, title: str):
+    # État de l'année
     total, fixed_mwh, avg_fixed, rest_mwh, cal_now = _year_state(ns)
 
     with st.container(border=True):
-        st.markdown(f"### {title} — restant **{rest_mwh:.0f} MWh** · CAL du jour **{cal_now:.2f} €/MWh** (source {CAL_DATE})")
+        st.markdown(
+            f"### {title} — restant **{rest_mwh:.0f} MWh** · CAL du jour **{cal_now:.2f} €/MWh** (source {CAL_DATE})"
+        )
 
-        # SLIDER en MWh (garde-fous pour petits restants)
+        # --- SLIDER MWh (garde-fous)
         if rest_mwh <= 0:
             st.info("Plus aucun MWh à fixer pour cette année.")
             extra = 0.0
@@ -477,82 +480,78 @@ def render_year(ns: str, title: str):
                 help="Choisissez directement la quantité en MWh à fixer aujourd’hui."
             )
 
-        # --- AVANT (projection interne : fixé @avg_fixed, restant @CAL du jour)
-        budget_before = (avg_fixed or 0.0) * fixed_mwh + cal_now * rest_mwh
-        unit_before   = (budget_before / total) if total > 0 else None
+        # --- AVANT (fixé @avg_fixed, restant @CAL)
+        fixed_cost_before = (avg_fixed or 0.0) * fixed_mwh
+        budget_before     = fixed_cost_before + cal_now * rest_mwh
 
-        # --- APRÈS (on fixe 'extra' au CAL, le reste du restant reste @CAL)
-        new_fixed_mwh   = fixed_mwh + extra
-        new_fixed_cost  = (avg_fixed or 0.0) * fixed_mwh + cal_now * extra
-        remaining_after = max(0.0, total - new_fixed_mwh)
-        projected_after = cal_now * remaining_after
-        budget_after    = new_fixed_cost + projected_after
-        unit_after      = (budget_after / total) if total > 0 else None
+        # --- APRÈS (on fixe 'extra' au CAL, le reste reste @CAL)
+        new_fixed_mwh     = fixed_mwh + extra
+        fixed_cost_after  = fixed_cost_before + cal_now * extra
+        remaining_after   = max(0.0, total - new_fixed_mwh)
+        budget_after      = fixed_cost_after + cal_now * remaining_after
+        fixed_avg_after   = (fixed_cost_after / new_fixed_mwh) if new_fixed_mwh > 0 else None
 
-        # Prix moyen du FIXÉ après clic
-        fixed_avg_after = ((avg_fixed or 0.0) * fixed_mwh + cal_now * extra) / new_fixed_mwh if new_fixed_mwh > 0 else None
+        # === KPIs ===============================================================
+        c1, c2, c3 = st.columns(3)
 
-        # === KPIs (autonomes) =====================================================
+        # 1) Prix d'achat moyen (fixé) — VERT si ça BAISSE
+        with c1:
+            delta_price = None
+            if fixed_avg_after is not None and avg_fixed is not None:
+                delta_price = fixed_avg_after - avg_fixed  # baisse => vert (inverse)
+            st.metric(
+                "Prix d'achat moyen (après clic)",
+                f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None
+                else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh"),
+                delta=(f"{delta_price:+.2f} €/MWh" if delta_price is not None else None),
+                delta_color="inverse",
+                help="Moyenne pondérée sur les volumes déjà verrouillés uniquement."
+            )
 
-# Recalculs sûrs (au cas où des variables amont n'existent plus ici)
-new_fixed_mwh   = fixed_mwh + extra
-fixed_cost_avant = (avg_fixed or 0.0) * fixed_mwh
-fixed_avg_after  = ((fixed_cost_avant + cal_now * extra) / new_fixed_mwh) if new_fixed_mwh > 0 else None
+        # 2) Couverture — VERT si ça MONTE
+        with c2:
+            cover_after = (new_fixed_mwh / total * 100.0) if total > 0 else 0.0
+            delta_cov   = (extra / total * 100.0) if total > 0 else None
+            st.metric(
+                "Couverture (après clic)",
+                f"{cover_after:.1f} %",
+                delta=(f"{delta_cov:+.1f} pts" if delta_cov is not None else None),
+                delta_color="normal",
+            )
 
-remaining_after = max(0.0, total - new_fixed_mwh)
-# Budget projeté cohérent avec ta logique (restant valorisé au CAL du jour)
-budget_before = fixed_cost_avant + cal_now * rest_mwh
-budget_after  = (fixed_cost_avant + cal_now * extra) + cal_now * remaining_after
+        # 3) Budget total estimé — PAS de delta
+        with c3:
+            st.metric(
+                "Budget total estimé (après clic)",
+                _fmt_eur(budget_after)
+            )
 
-# 1) Prix d'achat moyen (fixé) — vert si ça baisse
-c1, c2, c3 = st.columns(3)
+        # --- Barre horizontale (fixé / clic / restant) -------------------------
+        seg = pd.DataFrame({
+            "segment": ["Fixé existant", "Nouveau clic", "Restant après"],
+            "mwh":     [fixed_mwh,       extra,          remaining_after]
+        })
+        bar = alt.Chart(seg).mark_bar(height=20).encode(
+            x=alt.X("sum(mwh):Q", stack="zero",
+                    title=f"Répartition {title} (MWh) — Total {total:.0f}"),
+            color=alt.Color(
+                "segment:N",
+                scale=alt.Scale(
+                    domain=["Fixé existant", "Nouveau clic", "Restant après"],
+                    range=["#22c55e", "#3b82f6", "#9ca3af"]
+                )
+            ),
+            tooltip=[alt.Tooltip("segment:N"),
+                     alt.Tooltip("mwh:Q", format=".0f", title="MWh")]
+        ).properties(width="container")
+        st.altair_chart(bar, use_container_width=True)
 
-with c1:
-    delta_price = None
-    if fixed_avg_after is not None and avg_fixed is not None:
-        delta_price = fixed_avg_after - avg_fixed  # baisse => vert (inverse)
-    st.metric(
-        "Prix d'achat moyen (après clic)",
-        f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None
-        else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh"),
-        delta=(f"{delta_price:+.2f} €/MWh" if delta_price is not None else None),
-        delta_color="inverse",
-    )
+        st.caption(
+            "Le budget projeté valorise déjà le **restant** au **CAL du jour** ; "
+            "cliquer aujourd’hui **déplace** du ‘projeté’ vers du ‘fixé’. "
+            "L’impact visible est surtout sur le **prix moyen du fixé** et la **couverture**."
+        )
 
-# 2) Couverture — vert si ça monte
-with c2:
-    cover_after = (new_fixed_mwh / total * 100.0) if total > 0 else 0.0
-    delta_cov = (extra / total * 100.0) if total > 0 else None
-    st.metric(
-        "Couverture (après clic)",
-        f"{cover_after:.1f} %",
-        delta=(f"{delta_cov:+.1f} pts" if delta_cov is not None else None),
-        delta_color="normal",
-    )
-
-# 3) Budget total estimé — pas de delta
-with c3:
-    st.metric("Budget total estimé (après clic)", _fmt_eur(budget_after))
-
-# --- Barre horizontale (fixé / clic / restant) ----------------------------
-seg = pd.DataFrame({
-    "segment": ["Fixé existant", "Nouveau clic", "Restant après"],
-    "mwh":     [fixed_mwh,       extra,          remaining_after]
-})
-bar = alt.Chart(seg).mark_bar(height=20).encode(
-    x=alt.X("sum(mwh):Q", stack="zero", title=f"Répartition {title} (MWh) — Total {total:.0f}"),
-    color=alt.Color("segment:N", scale=alt.Scale(
-        domain=["Fixé existant","Nouveau clic","Restant après"],
-        range=["#22c55e","#3b82f6","#9ca3af"])),
-    tooltip=[alt.Tooltip("segment:N"), alt.Tooltip("mwh:Q", format=".0f", title="MWh")]
-).properties(width="container")
-st.altair_chart(bar, use_container_width=True)
-
-st.caption(
-    "Le budget projeté valorise déjà le **restant** au **CAL du jour** ; "
-    "cliquer aujourd’hui **déplace** du ‘projeté’ vers du ‘fixé’. "
-    "L’impact visible est surtout sur le **prix moyen du fixé** et la **couverture**."
-)
 
 # --- 3 onglets (on conserve la structure actuelle)
 tabs = st.tabs(["2026", "2027", "2028"])
