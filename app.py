@@ -439,7 +439,7 @@ def render_year(ns: str, title: str):
         with c2:
             cover_after = (new_fixed_mwh/total*100.0) if total>0 else 0.0
             st.metric("Couverture (après fixation)", f"{cover_after:.1f} %",
-                      delta=(f"{(extra/total*100.0):+.1f} pts" if total>0 else None))
+                      delta=(f"{(extra/total*100.0):+.1f} %" if total>0 else None))
         with c3:
             delta_budget = budget_after - budget_before
             st.metric("Budget total estimé (après fixation)", eur(budget_after),
