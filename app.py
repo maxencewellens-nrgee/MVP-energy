@@ -432,19 +432,13 @@ def render_year(ns: str, title: str):
         fixed_avg_after = ((avg_fixed or 0.0) * fixed_mwh + cal_now * extra) / new_fixed_mwh if new_fixed_mwh > 0 else None
 
         c1, c2, c3 = st.columns(3)
-        with c1: # calcule le delta seulement si on a une valeur "avant" ET "après"
-             delta_txt = None
-        if fixed_avg_after is not None and avg_fixed is not None:
-        delta_val = fixed_avg_after - avg_fixed   # baisse => bonne nouvelle
-        delta_txt = f"{delta_val:+.2f} €/MWh"
-
-    st.metric(
-        "Prix d'achat moyen (après fixation)",
-        price_eur_mwh(fixed_avg_after) if fixed_avg_after is not None
-        else ("—" if avg_fixed is None else price_eur_mwh(avg_fixed)),
-        delta=delta_txt,
-        delta_color="inverse",  # << vert si ça baisse
-    )
+        with c1:
+            delta_price = None
+            if fixed_avg_after is not None and avg_fixed is not None:
+                delta_price = fixed_avg_after - avg_fixed  # baisse => vert (bonne nouvelle)
+            st.metric( "Prix d'achat moyen (après clic)", f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh"), delta=(f"{delta_price:+.2f} €/MWh" if delta_price is not None else None),
+                delta_color="inverse",  # inverse = vert si baisse
+                     ) 
         with c2:
             cover_after = (new_fixed_mwh/total*100.0) if total>0 else 0.0
             st.metric("Couverture (après fixation)", f"{cover_after:.1f} %",
