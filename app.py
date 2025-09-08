@@ -12,7 +12,7 @@ import unicodedata
 import urllib.parse  # ⚠️ corrige l’espace insécable après 'parse'
 # ----------------------------- Configuration
 st.set_page_config(page_title="MVP Énergie — BE Day-Ahead", layout="wide")
-st.title("Gérer mes contrats ; recommandations & prise de décision")
+st.title("Gérer mes contrats d'énergie")
 
 # ----------------------------- Secrets / Token
 TOKEN = st.secrets.get("ENTSOE_TOKEN", "")
