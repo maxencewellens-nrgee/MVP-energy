@@ -205,7 +205,7 @@ daily = st.session_state.get("market_daily", pd.DataFrame())
 if daily.empty:
     st.error("Aucune donnée sur l'intervalle demandé.")
 else:
-    st.subheader("Historique prix marché électricité")
+    st.subheader("Market Data & Actions")
 
 # ===================== NAVIGATION PAR ONGLETS (plein écran) =====================
 
