@@ -589,14 +589,20 @@ def render_page_simulation():
     with g2027: render_contract_module("Couverture du contrat 2027", ns="y2027")
     with g2028: render_contract_module("Couverture du contrat 2028", ns="y2028")
 
-# ===================== Onglets TOP-LEVEL =====================
-tab_market, tab_past, tab_sim = st.tabs(["📈 Marché", "📒 Contrats passés", "🧮 Simulation & Couverture"])
+# ===================== NAVIGATION PERSISTANTE (top-level) =====================
+NAV_ITEMS = ["📈 Marché", "📒 Contrats passés", "🧮 Simulation & Couverture"]
 
-with tab_market:
+# Init une seule fois
+if "page" not in st.session_state:
+    st.session_state["page"] = NAV_ITEMS[0]
+
+# Nav horizontale persistante (ne PAS mettre index=…)
+page = st.radio("Navigation", NAV_ITEMS, key="page", horizontal=True, label_visibility="collapsed")
+
+# Router en fonction de la page choisie
+if page == "📈 Marché":
     render_page_market(daily)
-
-with tab_past:
+elif page == "📒 Contrats passés":
     render_page_past()
-
-with tab_sim:
+else:
     render_page_simulation()
