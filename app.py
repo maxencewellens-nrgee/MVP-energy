@@ -417,11 +417,9 @@ def render_year(ns: str, title: str):
 
 
 
-     def render_contract_module(title: str, ns: str):
-    CAL_USED, CAL_DATE = ensure_cal_used()
-
-    with st.container(border=True):
-        st.subheader(title)
+     def render_contract_module(title: str, ns: str): CAL_USED, CAL_DATE = ensure_cal_used()
+        with st.container(border=True):
+            st.subheader(title)
 
         # --- Clés
         total_key   = f"{ns}__total_mwh"
@@ -482,7 +480,7 @@ def render_year(ns: str, title: str):
                         st.session_state.pop(k, None)
                     st.rerun()  
 
-            
+        
 
         # --- Historique
         with st.expander("Fixations enregistrées", expanded=not df_clicks.empty):
