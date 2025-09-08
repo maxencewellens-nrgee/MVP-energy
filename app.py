@@ -14,6 +14,24 @@ import urllib.parse  # ⚠️ corrige l’espace insécable après 'parse'
 st.set_page_config(page_title="MVP Énergie — BE Day-Ahead", layout="wide")
 st.title("Gérer mes contrats d'énergie")
 
+# ====== NAVIGATION PERSISTANTE (haut de page) ======
+NAV_ITEMS = ["Graphique & Synthèse", "Contrats 2024–2025", "Simulation & Couverture"]
+
+# Init une seule fois (sinon reset à chaque rerun)
+if "page" not in st.session_state:
+    st.session_state["page"] = NAV_ITEMS[0]
+
+# Nav horizontale persistante (pas d'index param !)
+page = st.radio("Navigation", NAV_ITEMS, key="page", horizontal=True, label_visibility="collapsed")
+
+# Router
+if page == "Graphique & Synthèse":
+    render_page_graph()          # ta fonction qui affiche le chart + synthèse
+elif page == "Contrats 2024–2025":
+    render_page_recap_contracts()  # ta page recap volumes/prix/budgets
+elif page == "Simulation & Couverture":
+    render_page_simulation()     # ta page avec sliders/clics/couverture
+    
 # ----------------------------- Secrets / Token
 TOKEN = st.secrets.get("ENTSOE_TOKEN", "")
 if not TOKEN:
