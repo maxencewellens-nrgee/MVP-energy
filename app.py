@@ -250,7 +250,6 @@ else:
 
 # ---------- Page 1 : Marché (graphique + synthèse)
 st.subheader("Historique prix marché électricité")
-    mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
 
     vis = daily.copy()
     vis["date"] = pd.to_datetime(vis["date"])
