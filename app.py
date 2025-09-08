@@ -230,33 +230,32 @@ def ensure_cal_used():
         st.session_state["CAL_DATE"] = cal_date
     return cal_used, cal_date
 
-# ====== NAVIGATION PERSISTANTE (haut de page) ======
+# ===================== NAVIGATION PERSISTANTE (haut de page) =====================
 NAV_ITEMS = ["Graphique & Synthèse", "Contrats 2024–2025", "Simulation & Couverture"]
 
-# Init une seule fois (sinon reset à chaque rerun)
+# Init une seule fois
 if "page" not in st.session_state:
     st.session_state["page"] = NAV_ITEMS[0]
 
-# Nav horizontale persistante (pas d'index param !)
+# Nav horizontale persistante (ne PAS mettre index=…)
 page = st.radio("Navigation", NAV_ITEMS, key="page", horizontal=True, label_visibility="collapsed")
 
-# Router
+# Router en fonction de la page choisie
 if page == "Graphique & Synthèse":
-    render_page_graph()          # ta fonction qui affiche le chart + synthèse
+    render_page_graph()
 elif page == "Contrats 2024–2025":
-    render_page_recap_contracts()  # ta page recap volumes/prix/budgets
-elif page == "Simulation & Couverture":
-    render_page_simulation()     # ta page avec sliders/clics/couverture
+    render_page_recap_contracts()
+else:
+    render_page_simulation()
 
 # ---------- Page 1 : Marché (graphique + synthèse)
-def render_page_market(daily: pd.DataFrame):
-    st.subheader("Historique prix marché électricité")
+st.subheader("Historique prix marché électricité")
+    mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
 
     vis = daily.copy()
-    vis["date"] = pd.to_datetime(vis["date"]).sort_values()
-    mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
+    vis["date"] = pd.to_datetime(vis["date"])
+    vis = vis.sort_values("date")
     vis["sma"] = vis["avg"].rolling(window=int(mm_window), min_periods=max(5, int(mm_window)//3)).mean()
-
     vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")
     vis["spot_str"] = vis["avg"].apply(lambda v: f"{v:.2f}".replace(".", ",") + "€")
 
@@ -264,179 +263,246 @@ def render_page_market(daily: pd.DataFrame):
     base = alt.Chart(vis).encode(x=alt.X("date:T", title="Date", axis=alt.Axis(format="%b %y")))
 
     spot_line = base.mark_line(strokeWidth=1.5, color="#1f2937").encode(y=alt.Y("avg:Q", title="€/MWh"), tooltip=[])
-    sma_line  = base.transform_filter("datum.sma != null").mark_line(strokeWidth=3, color="#22c55e").encode(y="sma:Q", tooltip=[])
+    sma_line  = base.transform_filter("datum.sma != null").mark_line(strokeWidth=3, color="#22c55e").encode(y="sma:Q")
     points    = base.mark_point(opacity=0).encode(y="avg:Q").add_params(hover)
     hover_pt  = base.mark_circle(size=60, color="#1f2937").encode(y="avg:Q").transform_filter(hover)
     v_rule    = base.mark_rule(color="#9ca3af").encode(
         tooltip=[alt.Tooltip("date_str:N", title="Date"), alt.Tooltip("spot_str:N", title="Spot")]
     ).transform_filter(hover)
-
-    label_price_halo = base.mark_text(dx=14, dy=-18, align="left", fontSize=12, fontWeight="bold",
-                                      stroke="white", strokeWidth=5, opacity=1).encode(y="avg:Q", text="spot_str:N").transform_filter(hover)
-    label_price = base.mark_text(dx=14, dy=-18, align="left", fontSize=12, fontWeight="bold",
-                                 color="#111827", opacity=1).encode(y="avg:Q", text="spot_str:N").transform_filter(hover)
-    label_date_halo = base.mark_text(dx=14, dy=6, align="left", fontSize=11,
-                                     stroke="white", strokeWidth=5, opacity=1).encode(y="avg:Q", text="date_str:N").transform_filter(hover)
-    label_date = base.mark_text(dx=14, dy=6, align="left", fontSize=11,
-                                color="#374151", opacity=1).encode(y="avg:Q", text="date_str:N").transform_filter(hover)
+    lbl_ph    = base.mark_text(dx=14, dy=-16, align="left", fontSize=12, fontWeight="bold",
+                               stroke="white", strokeWidth=5, opacity=1).encode(y="avg:Q", text="spot_str:N").transform_filter(hover)
+    lbl_p     = base.mark_text(dx=14, dy=-16, align="left", fontSize=12, fontWeight="bold",
+                               color="#111827", opacity=1).encode(y="avg:Q", text="spot_str:N").transform_filter(hover)
+    lbl_dh    = base.mark_text(dx=14, dy=4, align="left",  fontSize=11,
+                               stroke="white", strokeWidth=5, opacity=1).encode(y="avg:Q", text="date_str:N").transform_filter(hover)
+    lbl_d     = base.mark_text(dx=14, dy=4, align="left",  fontSize=11,
+                               color="#374151", opacity=1).encode(y="avg:Q", text="date_str:N").transform_filter(hover)
 
     legend_sel = alt.selection_point(fields=['serie'], bind='legend')
     layer_lines = alt.layer(
         spot_line.transform_calculate(serie='"Spot"'),
-        sma_line.transform_calculate(serie='"Moyenne mobile"'),
+        sma_line.transform_calculate(serie='"Moyenne mobile"')
     ).add_params(legend_sel).transform_filter(legend_sel)
 
-    chart = alt.layer(layer_lines, points, v_rule, hover_pt, label_price_halo, label_price, label_date_halo, label_date)\
-               .properties(height=420, width="container").interactive()
+    chart = alt.layer(layer_lines, points, v_rule, hover_pt, lbl_ph, lbl_p, lbl_dh, lbl_d).properties(height=420, width="container").interactive()
     st.altair_chart(chart, use_container_width=True)
 
     last_visible_date = vis["date"].max()
     st.caption(f"Dernière donnée spot : {fmt_be(last_visible_date)} • Fuseau : Europe/Brussels")
 
-    # Synthèse
+    # ---------- TON BLOC "Synthèse Prix Spot et Forward" (inchangé) ----------
     st.subheader("Synthèse Prix Spot et Forward")
     overall_avg = round(daily["avg"].mean(), 2)
     last = daily.iloc[-1]
     last_day_dt = pd.to_datetime(daily["date"].max())
     mask_month = (
-        (pd.to_datetime(daily["date"]).dt.year == last_day_dt.year) &
+        (pd.to_datetime(daily["date"]).dt.year  == last_day_dt.year) &
         (pd.to_datetime(daily["date"]).dt.month == last_day_dt.month)
     )
     month_avg = round(daily.loc[mask_month, "avg"].mean(), 2)
     k1, k2, k3 = st.columns(3)
-    k1.metric("Moyenne depuis le début visible", price_eur_mwh(overall_avg))
-    k2.metric("Moyenne mois en cours",           price_eur_mwh(month_avg))
-    k3.metric("Dernier prix accessible",         price_eur_mwh(last['avg']))
+    k1.metric("Moyenne depuis le début visible", f"{overall_avg:.2f} €/MWh")
+    k2.metric("Moyenne mois en cours",           f"{month_avg:.2f} €/MWh")
+    k3.metric("Dernier prix accessible",         f"{last['avg']:.2f} €/MWh")
 
-    CAL_USED, CAL_DATE = ensure_cal_used()
+    CAL_USED, CAL_DATE = ensure_cal_used()  # <-- ta fonction déjà définie plus haut
     f1, f2, f3 = st.columns(3)
-    f1.metric(f"CAL-26 (élec) – {CAL_DATE}", price_eur_mwh(CAL_USED['y2026']))
-    f2.metric(f"CAL-27 (élec) – {CAL_DATE}", price_eur_mwh(CAL_USED['y2027']))
-    f3.metric(f"CAL-28 (élec) – {CAL_DATE}", price_eur_mwh(CAL_USED['y2028']))
+    f1.metric(f"CAL-26 (élec) – {CAL_DATE}", f"{CAL_USED['y2026']:.2f} €/MWh")
+    f2.metric(f"CAL-27 (élec) – {CAL_DATE}", f"{CAL_USED['y2027']:.2f} €/MWh")
+    f3.metric(f"CAL-28 (élec) – {CAL_DATE}", f"{CAL_USED['y2028']:.2f} €/MWh")
 
 
 # ---------- Page 2 : Contrats passés (2024/2025) — saisie + récap
-def render_page_past():
-    st.subheader("Contrats passés — 2024 & 2025")
+st.subheader("Historique prix marché électricité")
+    mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
 
-    def edit(ns: str, label: str):
-        vol_key, price_key, budg_key = f"{ns}__fixed_volume", f"{ns}__fixed_price", f"{ns}__fixed_budget"
-        if vol_key not in st.session_state:   st.session_state[vol_key] = 0.0
-        if price_key not in st.session_state: st.session_state[price_key] = 0.0
+    vis = daily.copy()
+    vis["date"] = pd.to_datetime(vis["date"])
+    vis = vis.sort_values("date")
+    vis["sma"] = vis["avg"].rolling(window=int(mm_window), min_periods=max(5, int(mm_window)//3)).mean()
+    vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")
+    vis["spot_str"] = vis["avg"].apply(lambda v: f"{v:.2f}".replace(".", ",") + "€")
 
-        with st.container(border=True):
-            st.markdown(f"**Contrat {label} — saisie**")
-            c1, c2, c3 = st.columns([1,1,1])
-            with c1: st.number_input("Volume (MWh)", min_value=0.0, step=5.0, format="%.0f", key=vol_key)
-            with c2: st.number_input("Prix (€/MWh)", min_value=0.0, step=1.0, format="%.0f", key=price_key)
+    hover = alt.selection_point(fields=["date"], nearest=True, on="mousemove", empty="none", clear=False)
+    base = alt.Chart(vis).encode(x=alt.X("date:T", title="Date", axis=alt.Axis(format="%b %y")))
 
-            vol   = float(st.session_state[vol_key])
-            price = float(st.session_state[price_key])
-            budget = vol * price
-            st.session_state[budg_key] = budget
-            with c3: st.metric("Budget total", eur(budget))
-            st.caption(f"Calcul : {mwh(vol,0)} × {price_eur_mwh(price) if price>0 else '—'} = {eur(budget)}")
+    spot_line = base.mark_line(strokeWidth=1.5, color="#1f2937").encode(y=alt.Y("avg:Q", title="€/MWh"), tooltip=[])
+    sma_line  = base.transform_filter("datum.sma != null").mark_line(strokeWidth=3, color="#22c55e").encode(y="sma:Q")
+    points    = base.mark_point(opacity=0).encode(y="avg:Q").add_params(hover)
+    hover_pt  = base.mark_circle(size=60, color="#1f2937").encode(y="avg:Q").transform_filter(hover)
+    v_rule    = base.mark_rule(color="#9ca3af").encode(
+        tooltip=[alt.Tooltip("date_str:N", title="Date"), alt.Tooltip("spot_str:N", title="Spot")]
+    ).transform_filter(hover)
+    lbl_ph    = base.mark_text(dx=14, dy=-16, align="left", fontSize=12, fontWeight="bold",
+                               stroke="white", strokeWidth=5, opacity=1).encode(y="avg:Q", text="spot_str:N").transform_filter(hover)
+    lbl_p     = base.mark_text(dx=14, dy=-16, align="left", fontSize=12, fontWeight="bold",
+                               color="#111827", opacity=1).encode(y="avg:Q", text="spot_str:N").transform_filter(hover)
+    lbl_dh    = base.mark_text(dx=14, dy=4, align="left",  fontSize=11,
+                               stroke="white", strokeWidth=5, opacity=1).encode(y="avg:Q", text="date_str:N").transform_filter(hover)
+    lbl_d     = base.mark_text(dx=14, dy=4, align="left",  fontSize=11,
+                               color="#374151", opacity=1).encode(y="avg:Q", text="date_str:N").transform_filter(hover)
 
-    # Saisie + récap compact
-    edit("y2024", "2024")
-    edit("y2025", "2025")
-    st.markdown("### Récapitulatif")
-    for ns, label in [("y2024", "2024"), ("y2025", "2025")]:
-        vol   = float(st.session_state.get(f"{ns}__fixed_volume", 0.0))
-        price = float(st.session_state.get(f"{ns}__fixed_price", 0.0))
-        budg  = vol * price
-        with st.container(border=True):
-            st.markdown(f"**Récap contrat {label}**")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Volume", mwh(vol, 0))
-            c2.metric("Prix", price_eur_mwh(price) if price > 0 else "—")
-            c3.metric("Budget total", eur(budg))
+    legend_sel = alt.selection_point(fields=['serie'], bind='legend')
+    layer_lines = alt.layer(
+        spot_line.transform_calculate(serie='"Spot"'),
+        sma_line.transform_calculate(serie='"Moyenne mobile"')
+    ).add_params(legend_sel).transform_filter(legend_sel)
+
+    chart = alt.layer(layer_lines, points, v_rule, hover_pt, lbl_ph, lbl_p, lbl_dh, lbl_d).properties(height=420, width="container").interactive()
+    st.altair_chart(chart, use_container_width=True)
+
+    last_visible_date = vis["date"].max()
+    st.caption(f"Dernière donnée spot : {fmt_be(last_visible_date)} • Fuseau : Europe/Brussels")
+
+    # ---------- TON BLOC "Synthèse Prix Spot et Forward" (inchangé) ----------
+    st.subheader("Synthèse Prix Spot et Forward")
+    overall_avg = round(daily["avg"].mean(), 2)
+    last = daily.iloc[-1]
+    last_day_dt = pd.to_datetime(daily["date"].max())
+    mask_month = (
+        (pd.to_datetime(daily["date"]).dt.year  == last_day_dt.year) &
+        (pd.to_datetime(daily["date"]).dt.month == last_day_dt.month)
+    )
+    month_avg = round(daily.loc[mask_month, "avg"].mean(), 2)
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Moyenne depuis le début visible", f"{overall_avg:.2f} €/MWh")
+    k2.metric("Moyenne mois en cours",           f"{month_avg:.2f} €/MWh")
+    k3.metric("Dernier prix accessible",         f"{last['avg']:.2f} €/MWh")
+
+    CAL_USED, CAL_DATE = ensure_cal_used()  # <-- ta fonction déjà définie plus haut
+    f1, f2, f3 = st.columns(3)
+    f1.metric(f"CAL-26 (élec) – {CAL_DATE}", f"{CAL_USED['y2026']:.2f} €/MWh")
+    f2.metric(f"CAL-27 (élec) – {CAL_DATE}", f"{CAL_USED['y2027']:.2f} €/MWh")
+    f3.metric(f"CAL-28 (élec) – {CAL_DATE}", f"{CAL_USED['y2028']:.2f} €/MWh")
 
 
 # ---------- Utilitaires simulation/contrats (sans sidebar)
-def _year_state(ns: str):
-    """total (MWh), fixed_mwh, avg_fixed (€/MWh), rest_mwh, cal_now (€/MWh) — lit session."""
-    CAL_USED = st.session_state.get("CAL_USED", {"y2026":82.61,"y2027":77.82,"y2028":74.38})
-    total = float(st.session_state.get(f"{ns}__total_mwh", 0.0) or 0.0)
-    clicks = pd.DataFrame(st.session_state.get(f"{ns}__clicks", []))
-    if not clicks.empty:
-        clicks["volume"] = pd.to_numeric(clicks["volume"], errors="coerce").fillna(0.0)
-        clicks["price"]  = pd.to_numeric(clicks["price"],  errors="coerce").fillna(0.0)
-        fixed_mwh = float(clicks["volume"].sum())
-        avg_fixed = float((clicks["price"] * clicks["volume"]).sum() / fixed_mwh) if fixed_mwh > 0 else None
-    else:
-        fixed_mwh, avg_fixed = 0.0, None
-    fixed_mwh = min(fixed_mwh, total) if total > 0 else 0.0
-    rest_mwh  = max(0.0, total - fixed_mwh)
-    cal_now   = float(CAL_USED.get(ns) or 0.0)
-    return total, fixed_mwh, avg_fixed, rest_mwh, cal_now
+st.subheader("Historique prix marché électricité")
+    mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
 
-def render_year(ns: str, title: str):
-    CAL_USED, CAL_DATE = ensure_cal_used()
-    total, fixed_mwh, avg_fixed, rest_mwh, cal_now = _year_state(ns)
+    vis = daily.copy()
+    vis["date"] = pd.to_datetime(vis["date"])
+    vis = vis.sort_values("date")
+    vis["sma"] = vis["avg"].rolling(window=int(mm_window), min_periods=max(5, int(mm_window)//3)).mean()
+    vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")
+    vis["spot_str"] = vis["avg"].apply(lambda v: f"{v:.2f}".replace(".", ",") + "€")
 
-    with st.container(border=True):
-        st.markdown(f"### {title} — restant **{rest_mwh:.0f} MWh** · CAL du jour **{cal_now:.2f} €/MWh** (source {CAL_DATE})")
+    hover = alt.selection_point(fields=["date"], nearest=True, on="mousemove", empty="none", clear=False)
+    base = alt.Chart(vis).encode(x=alt.X("date:T", title="Date", axis=alt.Axis(format="%b %y")))
 
-        # Slider MWh
-        if rest_mwh <= 0:
-            st.info("Plus aucun MWh à fixer pour cette année.")
-            extra = 0.0
-        else:
-            if rest_mwh >= 20:
-                step, def_val = 1.0, max(0.0, min(rest_mwh, round(rest_mwh * 0.25)))
-            elif rest_mwh >= 1:
-                step, def_val = 0.5, max(0.0, min(rest_mwh, round(rest_mwh * 0.25, 1)))
-            else:
-                step, def_val = (round(rest_mwh / 5, 3) or 0.001), round(rest_mwh / 2, 3)
-            def_val = max(0.0, min(float(rest_mwh), float(def_val)))
-            extra = st.slider(f"MWh à fixer aujourd’hui ({title})",
-                              min_value=0.0, max_value=float(rest_mwh),
-                              step=float(step), value=float(def_val),
-                              key=f"{ns}__mw_click",
-                              help="Choisissez directement la quantité en MWh à fixer aujourd’hui.")
+    spot_line = base.mark_line(strokeWidth=1.5, color="#1f2937").encode(y=alt.Y("avg:Q", title="€/MWh"), tooltip=[])
+    sma_line  = base.transform_filter("datum.sma != null").mark_line(strokeWidth=3, color="#22c55e").encode(y="sma:Q")
+    points    = base.mark_point(opacity=0).encode(y="avg:Q").add_params(hover)
+    hover_pt  = base.mark_circle(size=60, color="#1f2937").encode(y="avg:Q").transform_filter(hover)
+    v_rule    = base.mark_rule(color="#9ca3af").encode(
+        tooltip=[alt.Tooltip("date_str:N", title="Date"), alt.Tooltip("spot_str:N", title="Spot")]
+    ).transform_filter(hover)
+    lbl_ph    = base.mark_text(dx=14, dy=-16, align="left", fontSize=12, fontWeight="bold",
+                               stroke="white", strokeWidth=5, opacity=1).encode(y="avg:Q", text="spot_str:N").transform_filter(hover)
+    lbl_p     = base.mark_text(dx=14, dy=-16, align="left", fontSize=12, fontWeight="bold",
+                               color="#111827", opacity=1).encode(y="avg:Q", text="spot_str:N").transform_filter(hover)
+    lbl_dh    = base.mark_text(dx=14, dy=4, align="left",  fontSize=11,
+                               stroke="white", strokeWidth=5, opacity=1).encode(y="avg:Q", text="date_str:N").transform_filter(hover)
+    lbl_d     = base.mark_text(dx=14, dy=4, align="left",  fontSize=11,
+                               color="#374151", opacity=1).encode(y="avg:Q", text="date_str:N").transform_filter(hover)
 
-        # AVANT/APRÈS
-        budget_before = (avg_fixed or 0.0) * fixed_mwh + cal_now * rest_mwh
-        new_fixed_mwh   = fixed_mwh + extra
-        new_fixed_cost  = (avg_fixed or 0.0) * fixed_mwh + cal_now * extra
-        remaining_after = max(0.0, total - new_fixed_mwh)
-        budget_after    = new_fixed_cost + cal_now * remaining_after
-        fixed_avg_after = ((avg_fixed or 0.0) * fixed_mwh + cal_now * extra) / new_fixed_mwh if new_fixed_mwh > 0 else None
+    legend_sel = alt.selection_point(fields=['serie'], bind='legend')
+    layer_lines = alt.layer(
+        spot_line.transform_calculate(serie='"Spot"'),
+        sma_line.transform_calculate(serie='"Moyenne mobile"')
+    ).add_params(legend_sel).transform_filter(legend_sel)
 
-        # KPIs (deltas : vert si prix baisse)
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            delta_price = (fixed_avg_after - avg_fixed) if (fixed_avg_after is not None and avg_fixed is not None) else None
-            st.metric("Prix d'achat moyen (après fixation)",
-                      f"{fixed_avg_after:.2f} €/MWh" if fixed_avg_after is not None else ("—" if avg_fixed is None else f"{avg_fixed:.2f} €/MWh"),
-                      delta=(f"{delta_price:+.2f} €/MWh" if delta_price is not None else None),
-                      delta_color="inverse")  # vert si baisse
-        with c2:
-            cover_after = (new_fixed_mwh/total*100.0) if total>0 else 0.0
-            st.metric("Couverture (après fixation)", f"{cover_after:.1f} %",
-                      delta=(f"{(extra/total*100.0):+.1f} %" if total>0 else None))
-        with c3:
-            st.metric("Budget total estimé (après fixation)", eur(budget_after))
+    chart = alt.layer(layer_lines, points, v_rule, hover_pt, lbl_ph, lbl_p, lbl_dh, lbl_d).properties(height=420, width="container").interactive()
+    st.altair_chart(chart, use_container_width=True)
 
-        # Barre MWh
-        seg = pd.DataFrame({"segment":["Fixé existant","Nouvelle fixation","Restant après"],
-                            "mwh":[fixed_mwh, extra, remaining_after]})
-        bar = alt.Chart(seg).mark_bar(height=20).encode(
-            x=alt.X("sum(mwh):Q", stack="zero", title=f"Répartition {title} (MWh) — Total {total:.0f}"),
-            color=alt.Color("segment:N", scale=alt.Scale(
-                domain=["Fixé existant","Nouvelle fixation","Restant après"],
-                range=["#22c55e","#3b82f6","#9ca3af"])),
-            tooltip=[alt.Tooltip("segment:N"), alt.Tooltip("mwh:Q", format=".0f", title="MWh")]
-        ).properties(width="container")
-        st.altair_chart(bar, use_container_width=True)
+    last_visible_date = vis["date"].max()
+    st.caption(f"Dernière donnée spot : {fmt_be(last_visible_date)} • Fuseau : Europe/Brussels")
 
-        st.caption("Le budget projeté valorise déjà le **restant** au **CAL du jour** ; fixer aujourd’hui "
-                   "**déplace** du ‘projeté’ vers du ‘fixé’. Impact principal : **prix moyen du fixé** et **couverture**.")
+    # ---------- TON BLOC "Synthèse Prix Spot et Forward" (inchangé) ----------
+    st.subheader("Synthèse Prix Spot et Forward")
+    overall_avg = round(daily["avg"].mean(), 2)
+    last = daily.iloc[-1]
+    last_day_dt = pd.to_datetime(daily["date"].max())
+    mask_month = (
+        (pd.to_datetime(daily["date"]).dt.year  == last_day_dt.year) &
+        (pd.to_datetime(daily["date"]).dt.month == last_day_dt.month)
+    )
+    month_avg = round(daily.loc[mask_month, "avg"].mean(), 2)
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Moyenne depuis le début visible", f"{overall_avg:.2f} €/MWh")
+    k2.metric("Moyenne mois en cours",           f"{month_avg:.2f} €/MWh")
+    k3.metric("Dernier prix accessible",         f"{last['avg']:.2f} €/MWh")
 
-def render_contract_module(title: str, ns: str):
-    # On récupère les CAL (pour affichage) sans recréer les réglages ici
-    CAL_USED, CAL_DATE = ensure_cal_used()
+    CAL_USED, CAL_DATE = ensure_cal_used()  # <-- ta fonction déjà définie plus haut
+    f1, f2, f3 = st.columns(3)
+    f1.metric(f"CAL-26 (élec) – {CAL_DATE}", f"{CAL_USED['y2026']:.2f} €/MWh")
+    f2.metric(f"CAL-27 (élec) – {CAL_DATE}", f"{CAL_USED['y2027']:.2f} €/MWh")
+    f3.metric(f"CAL-28 (élec) – {CAL_DATE}", f"{CAL_USED['y2028']:.2f} €/MWh")
+
+
+       st.subheader("Historique prix marché électricité")
+    mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
+
+    vis = daily.copy()
+    vis["date"] = pd.to_datetime(vis["date"])
+    vis = vis.sort_values("date")
+    vis["sma"] = vis["avg"].rolling(window=int(mm_window), min_periods=max(5, int(mm_window)//3)).mean()
+    vis["date_str"] = vis["date"].dt.strftime("%d/%m/%y")
+    vis["spot_str"] = vis["avg"].apply(lambda v: f"{v:.2f}".replace(".", ",") + "€")
+
+    hover = alt.selection_point(fields=["date"], nearest=True, on="mousemove", empty="none", clear=False)
+    base = alt.Chart(vis).encode(x=alt.X("date:T", title="Date", axis=alt.Axis(format="%b %y")))
+
+    spot_line = base.mark_line(strokeWidth=1.5, color="#1f2937").encode(y=alt.Y("avg:Q", title="€/MWh"), tooltip=[])
+    sma_line  = base.transform_filter("datum.sma != null").mark_line(strokeWidth=3, color="#22c55e").encode(y="sma:Q")
+    points    = base.mark_point(opacity=0).encode(y="avg:Q").add_params(hover)
+    hover_pt  = base.mark_circle(size=60, color="#1f2937").encode(y="avg:Q").transform_filter(hover)
+    v_rule    = base.mark_rule(color="#9ca3af").encode(
+        tooltip=[alt.Tooltip("date_str:N", title="Date"), alt.Tooltip("spot_str:N", title="Spot")]
+    ).transform_filter(hover)
+    lbl_ph    = base.mark_text(dx=14, dy=-16, align="left", fontSize=12, fontWeight="bold",
+                               stroke="white", strokeWidth=5, opacity=1).encode(y="avg:Q", text="spot_str:N").transform_filter(hover)
+    lbl_p     = base.mark_text(dx=14, dy=-16, align="left", fontSize=12, fontWeight="bold",
+                               color="#111827", opacity=1).encode(y="avg:Q", text="spot_str:N").transform_filter(hover)
+    lbl_dh    = base.mark_text(dx=14, dy=4, align="left",  fontSize=11,
+                               stroke="white", strokeWidth=5, opacity=1).encode(y="avg:Q", text="date_str:N").transform_filter(hover)
+    lbl_d     = base.mark_text(dx=14, dy=4, align="left",  fontSize=11,
+                               color="#374151", opacity=1).encode(y="avg:Q", text="date_str:N").transform_filter(hover)
+
+    legend_sel = alt.selection_point(fields=['serie'], bind='legend')
+    layer_lines = alt.layer(
+        spot_line.transform_calculate(serie='"Spot"'),
+        sma_line.transform_calculate(serie='"Moyenne mobile"')
+    ).add_params(legend_sel).transform_filter(legend_sel)
+
+    chart = alt.layer(layer_lines, points, v_rule, hover_pt, lbl_ph, lbl_p, lbl_dh, lbl_d).properties(height=420, width="container").interactive()
+    st.altair_chart(chart, use_container_width=True)
+
+    last_visible_date = vis["date"].max()
+    st.caption(f"Dernière donnée spot : {fmt_be(last_visible_date)} • Fuseau : Europe/Brussels")
+
+    # ---------- TON BLOC "Synthèse Prix Spot et Forward" (inchangé) ----------
+    st.subheader("Synthèse Prix Spot et Forward")
+    overall_avg = round(daily["avg"].mean(), 2)
+    last = daily.iloc[-1]
+    last_day_dt = pd.to_datetime(daily["date"].max())
+    mask_month = (
+        (pd.to_datetime(daily["date"]).dt.year  == last_day_dt.year) &
+        (pd.to_datetime(daily["date"]).dt.month == last_day_dt.month)
+    )
+    month_avg = round(daily.loc[mask_month, "avg"].mean(), 2)
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Moyenne depuis le début visible", f"{overall_avg:.2f} €/MWh")
+    k2.metric("Moyenne mois en cours",           f"{month_avg:.2f} €/MWh")
+    k3.metric("Dernier prix accessible",         f"{last['avg']:.2f} €/MWh")
+
+    CAL_USED, CAL_DATE = ensure_cal_used()  # <-- ta fonction déjà définie plus haut
+    f1, f2, f3 = st.columns(3)
+    f1.metric(f"CAL-26 (élec) – {CAL_DATE}", f"{CAL_USED['y2026']:.2f} €/MWh")
+    f2.metric(f"CAL-27 (élec) – {CAL_DATE}", f"{CAL_USED['y2027']:.2f} €/MWh")
+    f3.metric(f"CAL-28 (élec) – {CAL_DATE}", f"{CAL_USED['y2028']:.2f} €/MWh")
+
+
 
     # -------------------- bloc visuel principal --------------------
     with st.container(border=True):
