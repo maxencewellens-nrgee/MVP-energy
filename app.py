@@ -657,75 +657,11 @@ def render_contract_module(title: str, ns: str):
                         use_container_width=True
                     )
 
- # ===================== NAVIGATION PAR ONGLETS =====================
-tab_market, tab_past, tab_sim = st.tabs(["📈 Marché", "📒 Contrats passés", "🧮 Simulation & Couverture"])
-
-# --- ONGLET 1 : Marché (graphique + synthèse CAL)
-with tab_market:
-    st.subheader("Historique prix marché électricité")
-    # >>> réutilise ton bloc actuel : préparation vis / chart Altair / caption dernière donnée
-    # vis = daily.copy(); ...  st.altair_chart(chart, use_container_width=True)
-    # puis la synthèse :
-    st.subheader("Synthèse Prix Spot et Forward")
-    # >>> réutilise ton bloc existant : KPI spot + ensure_cal_used() + 3 métriques CAL
-
-# --- ONGLET 2 : Contrats passés (2024 / 2025) — SAISIE + RÉCAP, sans sidebar
-with tab_past:
-    st.subheader("Contrats passés — 2024 & 2025")
-
-    def _edit_contract(ns: str, year_label: str):
-        vol_key   = f"{ns}__fixed_volume"
-        price_key = f"{ns}__fixed_price"
-        budg_key  = f"{ns}__fixed_budget"
-        if vol_key not in st.session_state:   st.session_state[vol_key] = 0.0
-        if price_key not in st.session_state: st.session_state[price_key] = 0.0
-
-        with st.container(border=True):
-            st.markdown(f"**Contrat {year_label} — saisie**")
-            c1, c2, c3 = st.columns([1,1,1])
-            with c1:
-                st.number_input("Volume (MWh)", min_value=0.0, step=5.0, format="%.0f", key=vol_key)
-            with c2:
-                st.number_input("Prix (€/MWh)", min_value=0.0, step=1.0, format="%.0f", key=price_key)
-            vol   = float(st.session_state[vol_key])
-            price = float(st.session_state[price_key])
-            budget = vol * price
-            st.session_state[budg_key] = budget
-            with c3:
-                st.metric("Budget total", eur(budget))
-            st.caption(f"Calcul : {mwh(vol,0)} × {price_eur_mwh(price) if price>0 else '—'} = {eur(budget)}")
-
-    # Saisie
-    _edit_contract("y2024", "2024")
-    _edit_contract("y2025", "2025")
-
-    # Récap horizontal compact (comme tu voulais)
-    st.markdown("### Récapitulatif")
-    for ns, label in [("y2024", "2024"), ("y2025", "2025")]:
-        vol   = float(st.session_state.get(f"{ns}__fixed_volume", 0.0))
-        price = float(st.session_state.get(f"{ns}__fixed_price", 0.0))
-        budg  = vol * price
-        with st.container(border=True):
-            st.markdown(f"**Récap contrat {label}**")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Volume", mwh(vol, 0))
-            c2.metric("Prix", price_eur_mwh(price) if price > 0 else "—")
-            c3.metric("Budget total", eur(budg))
-
-# --- ONGLET 3 : Simulation & Couverture (2026-2028)
-with tab_sim:
-    st.subheader("Simuler une fixation aujourd’hui (en MWh, au CAL du jour)")
-    # >>> réutilise ton bloc “ensure_cal_used” si besoin ici
-    # Affiche les trois onglets années à l’intérieur
-    sub2026, sub2027, sub2028 = st.tabs(["2026", "2027", "2028"])
-    with sub2026: render_year("y2026", "2026")
-    with sub2027: render_year("y2027", "2027")
-    with sub2028: render_year("y2028", "2028")
-
-    st.divider()
-    st.subheader("Couverture du contrat (gestion des fixations)")
-    # Ici on met les modules de gestion “déjà fixé” + ajout/suppression
-    g2026, g2027, g2028 = st.tabs(["Contrat 2026", "Contrat 2027", "Contrat 2028"])
-    with g2026: render_contract_module("Couverture du contrat 2026", ns="y2026")
-    with g2027: render_contract_module("Couverture du contrat 2027", ns="y2027")
-    with g2028: render_contract_module("Couverture du contrat 2028", ns="y2028")
+# Rendu modules année (identique à ta fin de fichier)
+tab2026, tab2027, tab2028 = st.tabs(["Contrat 2026", "Contrat 2027", "Contrat 2028"])
+with tab2026:
+    render_contract_module("Couverture du contrat 2026", ns="y2026")
+with tab2027:
+    render_contract_module("Couverture du contrat 2027", ns="y2027")
+with tab2028:
+    render_contract_module("Couverture du contrat 2028", ns="y2028")
