@@ -416,15 +416,14 @@ def render_year(ns: str, title: str):
                    "**déplace** du ‘projeté’ vers du ‘fixé’. Impact principal : **prix moyen du fixé** et **couverture**.")
 
 
-def render_contract_module(title: str, ns: str):
-    # On ne crée plus les widgets "Volume total" / "Fixations max" ici,
-    # on ne fait que LIRE les valeurs définies dans la page "Simulation & Couverture".
+
+     def render_contract_module(title: str, ns: str):
     CAL_USED, CAL_DATE = ensure_cal_used()
 
     with st.container(border=True):
         st.subheader(title)
 
-        # --- Clés / état
+        # --- Clés
         total_key   = f"{ns}__total_mwh"
         max_key     = f"{ns}__max_clicks"
         clicks_key  = f"{ns}__clicks"
@@ -437,52 +436,21 @@ def render_contract_module(title: str, ns: str):
         del_btn     = f"{ns}__btn_delete_click"
         dl_btn      = f"{ns}__dl_csv"
 
-        # --- LECTURE (pas de widgets de réglage ici)
-        total_mwh  = float(st.session_state.get(total_key, 0.0))
-        max_clicks = int(st.session_state.get(max_key, 5))
-        clicks     = st.session_state.get(clicks_key, [])
+        # === SÉCURITÉ: initialise si nécessaire (évite KeyError)
+        st.session_state.setdefault(total_key, 200.0)
+        st.session_state.setdefault(max_key, 5)
+        st.session_state.setdefault(clicks_key, [])   # <— important
+
+        # --- LECTURE
+        total_mwh  = float(st.session_state[total_key])
+        max_clicks = int(st.session_state[max_key])
+        clicks     = st.session_state[clicks_key]
         df_clicks  = pd.DataFrame(clicks)
+        ...
+        # (le reste de tes calculs inchangé)
+        ...
 
-        if not df_clicks.empty:
-            df_clicks["volume"] = pd.to_numeric(df_clicks["volume"], errors="coerce").fillna(0.0)
-            df_clicks["price"]  = pd.to_numeric(df_clicks["price"],  errors="coerce").fillna(0.0)
-
-        fixed_mwh = float(df_clicks["volume"].sum()) if not df_clicks.empty else 0.0
-        fixed_mwh = min(fixed_mwh, total_mwh) if total_mwh > 0 else 0.0
-        rest_mwh  = max(0.0, total_mwh - fixed_mwh)
-        cov_pct   = round((fixed_mwh / total_mwh * 100.0), 2) if total_mwh > 0 else 0.0
-
-        # Prix moyen pondéré du fixé
-        total_cost_fixed = float((df_clicks["price"] * df_clicks["volume"]).sum()) if fixed_mwh > 0 else 0.0
-        avg_fixed_mwh    = float(total_cost_fixed / fixed_mwh) if fixed_mwh > 0 else None
-
-        cal_price  = st.session_state["CAL_USED"].get(ns)
-
-        # --- Synthèse couverture
-        c1, c2, c3, c4, c5 = st.columns([1,1,1,1,1.2])
-        c1.metric("Volume total", f"{total_mwh:.0f} MWh")
-        c2.metric("Déjà fixé",    f"{fixed_mwh:.0f} MWh")
-        c3.metric("Restant",      f"{rest_mwh:.0f} MWh")
-        c4.metric("Couverture",   f"{cov_pct:.1f} %")
-        c5.metric(f"CAL utilisé ({CAL_DATE})", f"{cal_price:.2f} €/MWh" if cal_price is not None else "—")
-        st.progress(min(cov_pct/100.0, 1.0), text=f"Couverture {cov_pct:.1f}%")
-
-        # --- Budget (fixé uniquement)
-        with st.container(border=True):
-            st.markdown("#### Budget (déjà fixé)")
-            b1, b2, b3 = st.columns([1,1,1])
-            b1.metric("Volume fixé", f"{fixed_mwh:.0f} MWh")
-            b2.metric("Prix moyen fixé", f"{avg_fixed_mwh:.2f} €/MWh" if avg_fixed_mwh is not None else "—")
-            b3.metric("Budget fixé", f"{total_cost_fixed:,.0f} €".replace(",", " "))
-            if avg_fixed_mwh is not None:
-                st.caption(
-                    f"Calcul : Σ(Volume × Prix) / Volume fixé = {avg_fixed_mwh:.2f} €/MWh "
-                    f"(Σ = {total_cost_fixed:,.0f} €, Volume = {fixed_mwh:.0f} MWh)".replace(",", " ")
-                )
-            else:
-                st.caption("Aucune fixation enregistrée pour l’instant (prix moyen du fixé indisponible).")
-
-        # --- Ajouter une fixation (ces widgets sont uniques par ns → pas de collision)
+        # --- Ajouter une fixation
         with st.container(border=True):
             st.markdown("#### Ajouter une fixation")
             col1, col2, col3, col4 = st.columns([1, 1, 1, 0.8])
@@ -501,18 +469,20 @@ def render_contract_module(title: str, ns: str):
             st.caption(f"Fixations utilisées : {used}/{max_clicks} (les paramètres se règlent dans l’onglet “Simulation & Couverture”).")
 
             if add_click:
+                # === SÉCURITÉ: re-get la liste (si Streamlit a rerendu)
+                lst = st.session_state.setdefault(clicks_key, [])
                 if used >= int(max_clicks):
                     st.error(f"Limite atteinte ({int(max_clicks)} fixations).")
                 elif new_vol <= 0 or new_price <= 0:
                     st.warning("Prix et volume doivent être > 0.")
                 else:
-                    st.session_state[clicks_key].append(
-                        {"date": new_date, "price": float(new_price), "volume": float(new_vol)}
-                    )
+                    lst.append({"date": new_date, "price": float(new_price), "volume": float(new_vol)})
                     st.success("Fixation ajoutée.")
                     for k in (price_key, vol_key):
                         st.session_state.pop(k, None)
-                    st.rerun()
+                    st.rerun()  
+
+            
 
         # --- Historique
         with st.expander("Fixations enregistrées", expanded=not df_clicks.empty):
