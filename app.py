@@ -51,6 +51,26 @@ def mwh(v: float, dec: int = 0) -> str:
 def fmt_be(d) -> str:
     return pd.to_datetime(d).strftime("%d/%m/%Y")
 
+# ----------------------------- INIT état global (une fois)
+NS_LIST = ["y2026", "y2027", "y2028"]
+
+def init_state_once():
+    # valeurs par défaut stables
+    defaults_total = 200.0
+    defaults_max_clicks = 5
+
+    for ns in NS_LIST:
+        st.session_state.setdefault(f"{ns}__total_mwh", defaults_total)
+        st.session_state.setdefault(f"{ns}__max_clicks", defaults_max_clicks)
+        st.session_state.setdefault(f"{ns}__clicks", [])
+
+    # Sélections de l’onglet 4 (résumé)
+    st.session_state.setdefault("tc_year", "2026")
+    st.session_state.setdefault("tc_dso", "ORES")
+    st.session_state.setdefault("tc_seg", "BT (≤56 kVA)")
+
+# >>> appelle l’initialisation après avoir chargé 'daily'
+init_state_once()
 # ----------------------------- Data market
 @st.cache_data(ttl=24*3600)
 def fetch_daily(start_date: str, end_inclusive_date: str) -> pd.DataFrame:
@@ -620,21 +640,25 @@ def render_page_total_cost():
     st.subheader("💶 Coût total (réel) — Résumé")
     st.caption("Énergie = (fixé au prix moyen des clics) + (restant au CAL). Réseau = Transport (Elia) + Distribution (GRD). TVA = 21 % (B2B).")
 
-    # 1) Année + GRD + Tension (options dynamiques, évite combos vides -> pas de reset)
-    year_map = {"2026":"y2026", "2027":"y2027", "2028":"y2028"}
-    year = st.radio("Année", ["2026","2027","2028"], horizontal=True, key="tc_year")
-    ns = year_map[year]
-    annee_int = int(year)
+   # 1) Année + GRD + Tension (dynamiques, sans reset des autres valeurs)
+year_map = {"2026":"y2026", "2027":"y2027", "2028":"y2028"}
 
-    dsos = _dsos_for_year(annee_int) or ["ORES","RESA"]    # fallback si table vide
-    if st.session_state.get("tc_dso") not in dsos:
-        st.session_state["tc_dso"] = dsos[0]
-    dso = st.selectbox("GRD (distributeur)", dsos, key="tc_dso")
+# Année : lit/écrit dans l'état mais ne casse pas les autres sélections
+year = st.radio("Année", ["2026","2027","2028"], horizontal=True, key="tc_year")
+ns = year_map[year]
+annee_int = int(year)
 
-    seg_opts = _segments_for(annee_int, dso) or ["BT (≤56 kVA)"]
-    if st.session_state.get("tc_seg") not in seg_opts:
-        st.session_state["tc_seg"] = seg_opts[0]
-    seg_label = st.selectbox("Tension", seg_opts, key="tc_seg")
+# Options disponibles selon la table (sinon fallback)
+dsos = _dsos_for_year(annee_int) or ["ORES","RESA","AIEG","AIESH","REW"]
+if st.session_state.get("tc_dso") not in dsos:
+    # ne change QUE si la valeur courante est invalide
+    st.session_state["tc_dso"] = dsos[0]
+dso = st.selectbox("GRD (distributeur)", dsos, key="tc_dso")
+
+seg_opts = _segments_for(annee_int, dso) or ["BT (≤56 kVA)","MT (>56 kVA)"]
+if st.session_state.get("tc_seg") not in seg_opts:
+    st.session_state["tc_seg"] = seg_opts[0]
+seg_label = st.selectbox("Tension", seg_opts, key="tc_seg")
 
     # 2) Volumes / énergie
     total_mwh = float(st.session_state.get(f"{ns}__total_mwh", 0.0) or 0.0)
