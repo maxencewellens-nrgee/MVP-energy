@@ -10,9 +10,28 @@ import pytz
 import html as ihtml
 import unicodedata
 import urllib.parse  # ⚠️ corrige l’espace insécable après 'parse'
+
 # ----------------------------- Configuration
 st.set_page_config(page_title="MVP Énergie — BE Day-Ahead", layout="wide")
 st.title("Gérer mes contrats d'énergie")
+
+# ---- ONE-TIME INIT (ne s'exécute qu'une fois par session)
+if "INIT_DONE" not in st.session_state:
+    # Contrats 2026-2028 (ne pas écraser si déjà présent)
+    for ns in ["y2026", "y2027", "y2028"]:
+        st.session_state.setdefault(f"{ns}__total_mwh", 200.0)
+        st.session_state.setdefault(f"{ns}__max_clicks", 5)
+        st.session_state.setdefault(f"{ns}__clicks", [])
+
+    # Sélection Résumé (onglet 4)
+    st.session_state.setdefault("tc_year", "2026")
+    st.session_state.setdefault("tc_dso", "ORES")
+    st.session_state.setdefault("tc_seg", "BT (≤56 kVA)")
+
+    # Navigation
+    st.session_state.setdefault("page", "📈 Marché")
+
+    st.session_state["INIT_DONE"] = True
 
 # ----------------------------- Secrets / Token
 TOKEN = st.secrets.get("ENTSOE_TOKEN", "")
@@ -115,23 +134,6 @@ def _segments_for(annee: int, dso: str):
     except Exception:
         return []
 
-# ----------------------------- INIT état global (une fois)
-NS_LIST = ["y2026", "y2027", "y2028"]
-
-def init_state_once():
-    # valeurs par défaut stables
-    defaults_total = 200.0
-    defaults_max_clicks = 5
-
-    for ns in NS_LIST:
-        st.session_state.setdefault(f"{ns}__total_mwh", defaults_total)
-        st.session_state.setdefault(f"{ns}__max_clicks", defaults_max_clicks)
-        st.session_state.setdefault(f"{ns}__clicks", [])
-
-    # Sélections de l’onglet 4 (résumé)
-    st.session_state.setdefault("tc_year", "2026")
-    st.session_state.setdefault("tc_dso", "ORES")
-    st.session_state.setdefault("tc_seg", "BT (≤56 kVA)")
 
 # ----------------------------- Data market
 @st.cache_data(ttl=24*3600)
@@ -299,19 +301,7 @@ if daily.empty:
     st.error("Aucune donnée sur l'intervalle demandé.")
 else:
     st.subheader("Market Data & Actions")
-# init unique
-if "market_daily" not in st.session_state:
-    try:
-        st.session_state["market_daily"] = load_market(start_input, end_input)
-        st.session_state["market_params"] = (start_input, end_input, lookback)
-    except Exception as e:
-        st.error(f"Erreur : {e}")
-        st.stop()
 
-daily = st.session_state.get("market_daily", pd.DataFrame())
-
-# >>> APPELER ICI (après le load des données)
-init_state_once()
 
 # ===================== NAVIGATION PAR ONGLETS (plein écran) =====================
 
@@ -695,38 +685,6 @@ def render_page_simulation():
     with g2027: render_contract_module("Couverture du contrat 2027", ns="y2027")
     with g2028: render_contract_module("Couverture du contrat 2028", ns="y2028")
 
-# ---------- Page 4 : Coût total (réel) — résumé simple
-# ---------- Page 4 : Coût total (réel) — résumé simple & robuste
-
-def _dsos_for_year(annee: int):
-    """Liste des GRD disponibles pour l'année (d'après NETWORK_TABLE)."""
-    try:
-        return sorted({dso for (y, dso, seg) in NETWORK_TABLE.keys() if y == annee})
-    except Exception:
-        return []
-
-def _segments_for(annee: int, dso: str):
-    """Labels UI de segments disponibles pour (année, dso)."""
-    label = {"BT": "BT (≤56 kVA)", "MT": "MT (>56 kVA)"}
-    try:
-        segs = sorted({seg for (y, dd, seg) in NETWORK_TABLE.keys() if y == annee and dd == dso})
-        return [label[s] for s in segs if s in label]
-    except Exception:
-        return []
-
-def _blended_energy(ns: str):
-    """
-    Retourne: (blended €/MWh, fixed_mwh, avg_fixed €/MWh|None, rest_mwh, cal_now €/MWh)
-    Énergie moyenne pondérée = (fixé au prix moyen des clics) + (restant au CAL).
-    """
-    total, fixed_mwh, avg_fixed, rest_mwh, cal_now = _year_state(ns)
-    if total <= 0:
-        return None, 0.0, None, 0.0, float(cal_now or 0.0)
-    if fixed_mwh <= 0:
-        return float(cal_now or 0.0), 0.0, None, float(total), float(cal_now or 0.0)
-    avg_fixed = float(avg_fixed or 0.0)
-    blended = ((avg_fixed * fixed_mwh) + (float(cal_now or 0.0) * rest_mwh)) / float(total)
-    return float(blended), float(fixed_mwh), avg_fixed, float(rest_mwh), float(cal_now or 0.0)
 
 
 # ---------- Page 4 : Coût total (réel) — résumé simple, stable & lisible
