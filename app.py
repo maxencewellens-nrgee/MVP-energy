@@ -636,26 +636,51 @@ def render_page_total_cost():
         st.error("Impossible de calculer le prix énergie moyen.")
         return
 
-    # RÉSEAU : seuls 2 critères modifiables → GRD + Tension (valeurs auto, non éditables)
+        # RÉSEAU : sélection guidée par ce qui existe dans NETWORK_TABLE
     st.markdown("### Réseau (Transport + Distribution)")
-    colr1, colr2 = st.columns(2)
-    with colr1:
-        dso = st.selectbox("GRD (distributeur)", ["ORES","RESA","AIEG","AIESH","REW"], key="tc_dso")
-    with colr2:
-        segment_label = st.selectbox("Tension", ["BT (≤56 kVA)","MT (>56 kVA)"], key="tc_segment")
+    annee_int = int(year)
 
-    transport_eur_mwh, dso_var, dso_fixe_an = get_network_params(int(year), dso, segment_label)
-    if transport_eur_mwh is None:
+    available_dsos = list_dsos_for_year(annee_int)
+    if not available_dsos:
+        st.error(f"Aucun barème réseau n'est défini pour {annee_int} dans NETWORK_TABLE.")
+        return
+
+    # Conserve un choix valide entre les reruns
+    current_dso = st.session_state.get("tc_dso")
+    if current_dso not in available_dsos:
+        current_dso = available_dsos[0]
+        st.session_state["tc_dso"] = current_dso
+    dso = st.selectbox("GRD (distributeur)", options=available_dsos, key="tc_dso")
+
+    available_segments = list_segments_for(annee_int, dso)
+    if not available_segments:
+        st.warning(f"Aucun segment disponible pour {dso} en {annee_int}. Complète NETWORK_TABLE.")
+        return
+
+    current_seg = st.session_state.get("tc_segment")
+    if current_seg not in available_segments:
+        current_seg = available_segments[0]
+        st.session_state["tc_segment"] = current_seg
+    segment_label = st.selectbox("Tension", options=available_segments, key="tc_segment")
+
+    seg_code = to_seg_code(segment_label)
+    ref = NETWORK_TABLE.get((annee_int, dso, seg_code))
+    if not ref:
         st.warning("Barèmes manquants pour cette combinaison (année/GRD/tension). Complète NETWORK_TABLE.")
-        transport_eur_mwh, dso_var, dso_fixe_an = 0.0, 0.0, 0.0
+        # Valeurs sûres (zéro) pour éviter tout crash et continuer l'affichage
+        transport_eur_mwh = dso_var = dso_fixe_an = 0.0
+    else:
+        transport_eur_mwh = float(ref["transport_eur_mwh"])
+        dso_var = float(ref["dso_var_eur_mwh"])
+        dso_fixe_an = float(ref["dso_fixe_eur_an"])
 
-    # Affichage lecture seule (aucun champ modifiable)
+    # Affichage lecture seule
     colv1, colv2, colv3 = st.columns(3)
     colv1.metric("Transport Elia (€/MWh)", f"{transport_eur_mwh:,.2f}".replace(",", " "))
     colv2.metric("Distribution variable (€/MWh)", f"{dso_var:,.2f}".replace(",", " "))
     colv3.metric("Distribution fixe (€/an)", f"{dso_fixe_an:,.0f}".replace(",", " "))
 
-    # Conversion du fixe en €/MWh — hypothèse MVP : 1 site (pas de champ “nombre de sites”)
+    # Pro-rating du fixe (hypothèse MVP : 1 site)
     dso_fix_eur_mwh = (dso_fixe_an) / total_mwh if total_mwh > 0 else 0.0
 
     # TAXES : B2B → TVA 21 % (pas d’UI)
@@ -704,6 +729,18 @@ NETWORK_TABLE = {
     (2026, "RESA", "MT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 28.0, "dso_fixe_eur_an": 620.0},
     # TODO: ajouter 2027/2028 + AIEG/AIESH/REW…
 }
+def list_dsos_for_year(annee: int):
+    dsos = sorted({dso for (y, dso, seg) in NETWORK_TABLE.keys() if y == annee})
+    return dsos
+
+def list_segments_for(annee: int, dso: str):
+    segs = sorted({seg for (y, dd, seg) in NETWORK_TABLE.keys() if y == annee and dd == dso})
+    # On mappe en label UI
+    label_map = {"BT": "BT (≤56 kVA)", "MT": "MT (>56 kVA)"}
+    return [label_map[s] for s in segs if s in label_map]
+
+def to_seg_code(segment_label: str):
+    return "BT" if segment_label.startswith("BT") else "MT"
 
 def get_network_params(annee: int, dso: str, segment_label: str):
     seg = "BT" if segment_label.startswith("BT") else "MT"
