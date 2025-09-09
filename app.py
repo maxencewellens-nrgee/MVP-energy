@@ -26,16 +26,27 @@ tz_utc = pytz.UTC
 tz_be  = pytz.timezone("Europe/Brussels")
 client = EntsoePandasClient(api_key=TOKEN)
 
-# ----------------------------- Helpers format (unifiés)
-def eur(amount: float, dec: int = 0) -> str:
-    s = f"{amount:,.{dec}f}".replace(",", " ")
-    return f"{s} €"
+# ----------------------------- Helpers format (FR-BE stables)
+NBSP = "\u00A0"  # espace insécable avant le symbole
 
-def price_eur_mwh(p: float) -> str:
-    return f"{p:,.2f} €/MWh".replace(",", " ")
+def _fmt_fr(val: float, dec: int = 2) -> str:
+    """Format nombre style FR-BE : 98.560,50 (milliers='.', décimales=',')."""
+    if val is None:
+        val = 0.0
+    s = f"{float(val):,.{dec}f}"           # ex: 98,560.50 (US)
+    s = s.replace(",", " ")                # virgules -> fine space temporaire
+    s = s.replace(".", ",")                # point décimal -> virgule
+    s = s.replace(" ", ".")                # fine space -> point milliers
+    return s
+
+def eur(val: float, dec: int = 2) -> str:
+    return f"{_fmt_fr(val, dec)}{NBSP}€"
+
+def price_eur_mwh(p: float, dec: int = 2) -> str:
+    return f"{_fmt_fr(p, dec)}{NBSP}€/MWh"
 
 def mwh(v: float, dec: int = 0) -> str:
-    return f"{v:,.{dec}f} MWh".replace(",", " ")
+    return f"{_fmt_fr(v, dec)}{NBSP}MWh"
 
 def fmt_be(d) -> str:
     return pd.to_datetime(d).strftime("%d/%m/%Y")
@@ -590,8 +601,10 @@ def render_page_simulation():
     with g2028: render_contract_module("Couverture du contrat 2028", ns="y2028")
 
 # ---------- Page 4 : Coût total (réel) — résumé simple
+
+# ---------- Page 4 : Coût total (réel) — résumé simple & robuste
 def _blended_energy(ns: str):
-    """Retourne (blended_price €/MWh, fixed_mwh, avg_fixed €/MWh|None, rest_mwh, cal_now €/MWh)."""
+    """(blended €/MWh, fixed_mwh, avg_fixed €/MWh|None, rest_mwh, cal_now €/MWh)"""
     total, fixed_mwh, avg_fixed, rest_mwh, cal_now = _year_state(ns)
     if total <= 0:
         return None, 0.0, None, 0.0, float(cal_now or 0.0)
@@ -605,20 +618,25 @@ def render_page_total_cost():
     ensure_cal_used()
 
     st.subheader("💶 Coût total (réel) — Résumé")
-    st.caption("Énergie = (fixé au prix moyen des clics) + (restant au CAL). Réseau = Transport (Elia) + Distribution (GRD). TVA = 21% (B2B).")
+    st.caption("Énergie = (fixé au prix moyen des clics) + (restant au CAL). Réseau = Transport (Elia) + Distribution (GRD). TVA = 21 % (B2B).")
 
-    # 1) Choix année + GRD + tension
+    # 1) Année + GRD + Tension (options dynamiques, évite combos vides -> pas de reset)
     year_map = {"2026":"y2026", "2027":"y2027", "2028":"y2028"}
     year = st.radio("Année", ["2026","2027","2028"], horizontal=True, key="tc_year")
     ns = year_map[year]
+    annee_int = int(year)
 
-    col_sel1, col_sel2 = st.columns(2)
-    with col_sel1:
-        dso = st.selectbox("GRD (distributeur)", ["ORES","RESA","AIEG","AIESH","REW"], key="tc_dso")
-    with col_sel2:
-        seg_label = st.selectbox("Tension", ["BT (≤56 kVA)","MT (>56 kVA)"], key="tc_seg")
+    dsos = _dsos_for_year(annee_int) or ["ORES","RESA"]    # fallback si table vide
+    if st.session_state.get("tc_dso") not in dsos:
+        st.session_state["tc_dso"] = dsos[0]
+    dso = st.selectbox("GRD (distributeur)", dsos, key="tc_dso")
 
-    # 2) Volumes / prix énergie (depuis ton module de couverture)
+    seg_opts = _segments_for(annee_int, dso) or ["BT (≤56 kVA)"]
+    if st.session_state.get("tc_seg") not in seg_opts:
+        st.session_state["tc_seg"] = seg_opts[0]
+    seg_label = st.selectbox("Tension", seg_opts, key="tc_seg")
+
+    # 2) Volumes / énergie
     total_mwh = float(st.session_state.get(f"{ns}__total_mwh", 0.0) or 0.0)
     if total_mwh <= 0:
         st.warning("Définis le 'Volume total (MWh)' dans **🧮 Simulation & Couverture**.")
@@ -629,68 +647,72 @@ def render_page_total_cost():
 
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Volume total", f"{total_mwh:.0f} MWh")
-        c2.metric("Fixé", f"{fixed_mwh:.0f} MWh")
-        c3.metric("Restant (valorisé CAL)", f"{rest_mwh:.0f} MWh")
-        c4.metric(f"CAL {year} ({CAL_DATE})", f"{cal_now:.2f} €/MWh")
+        c1.metric("Volume total", mwh(total_mwh, 0))
+        c2.metric("Fixé", mwh(fixed_mwh, 0))
+        c3.metric("Restant (valorisé CAL)", mwh(rest_mwh, 0))
+        c4.metric(f"CAL {year} ({CAL_DATE})", price_eur_mwh(cal_now))
 
-    # 3) Réseau (auto, non éditable) — hypothèse MVP: 1 site
-    transport, dso_var, dso_fixe_an = _get_network(int(year), dso, seg_label)
+    # 3) Réseau (auto, non éditable) — hypothèse MVP : 1 site
+    transport, dso_var, dso_fixe_an = _get_network(annee_int, dso, seg_label)
     dso_fixe_eur_mwh = (dso_fixe_an) / total_mwh if total_mwh > 0 else 0.0
 
-    # 4) Budgets et totaux
-    # Énergie — budget = (fixé * avg_fixed) + (restant * CAL)
-    energy_budget_eur = (fixed_mwh * (avg_fixed or 0.0)) + (rest_mwh * cal_now)
-    energy_eur_mwh = float(blended)  # prix moyen pondéré €/MWh
+    # 4) Budgets / totaux (HT -> TVA -> TTC)
+    energy_budget = (fixed_mwh * (avg_fixed or 0.0)) + (rest_mwh * cal_now)
+    energy_eur_mwh = float(blended)
 
-    # Réseau — €/MWh + € annuels
     reseau_eur_mwh = transport + dso_var + dso_fixe_eur_mwh
-    reseau_budget_eur = reseau_eur_mwh * total_mwh
+    reseau_budget = reseau_eur_mwh * total_mwh
 
     ht_eur_mwh = energy_eur_mwh + reseau_eur_mwh
-    ht_budget_eur = energy_budget_eur + reseau_budget_eur
+    ht_budget   = energy_budget + reseau_budget
 
-    tva_rate = 0.21  # B2B
+    tva_rate = 0.21
     tva_eur_mwh = ht_eur_mwh * tva_rate
-    tva_budget_eur = ht_budget_eur * tva_rate
+    tva_budget   = ht_budget * tva_rate
 
     ttc_eur_mwh = ht_eur_mwh + tva_eur_mwh
-    ttc_budget_eur = ht_budget_eur + tva_budget_eur
+    ttc_budget   = ht_budget + tva_budget
 
-    # 5) KPIs
+    # 5) KPIs avec format FR-BE
     k1, k2, k3 = st.columns(3)
-    k1.metric("Total HT (€/MWh)", f"{ht_eur_mwh:,.2f}".replace(",", " "))
-    k2.metric("TVA 21% (€/MWh)", f"{tva_eur_mwh:,.2f}".replace(",", " "))
-    k3.metric("Total TTC (€/MWh)", f"{ttc_eur_mwh:,.2f}".replace(",", " "))
+    k1.metric("Total HT (€/MWh)", price_eur_mwh(ht_eur_mwh))
+    k2.metric("TVA 21 % (€/MWh)", price_eur_mwh(tva_eur_mwh))
+    k3.metric("Total TTC (€/MWh)", price_eur_mwh(ttc_eur_mwh))
 
     b1, b2 = st.columns(2)
-    b1.metric("Budget HT (€/an)", f"{ht_budget_eur:,.0f}".replace(",", " "))
-    b2.metric("Budget TTC (€/an)", f"{ttc_budget_eur:,.0f}".replace(",", " "))
+    b1.metric("Budget HT (€/an)", eur(ht_budget, 0))
+    b2.metric("Budget TTC (€/an)", eur(ttc_budget, 0))
 
-    # 6) Tableau récap clair (€/MWh ET €)
+    # 6) Tableau récap — colonnes formatées
     st.markdown("### Tableau récapitulatif")
     df = pd.DataFrame([
-        ["Énergie — fixé",                avg_fixed if avg_fixed is not None else 0.0,    fixed_mwh * (avg_fixed or 0.0)],
-        ["Énergie — restant au CAL",     cal_now,                                        rest_mwh * cal_now],
-        ["Énergie — **moyenne pondérée**", energy_eur_mwh,                                energy_budget_eur],
-        ["Transport (Elia)",             transport,                                       transport * total_mwh],
-        ["Distribution — variable",      dso_var,                                         dso_var * total_mwh],
-        ["Distribution — fixe → €/MWh",  dso_fixe_eur_mwh,                                dso_fixe_an],  # en €: fixe annuel total (1 site)
-        ["**Sous-total HT**",            ht_eur_mwh,                                      ht_budget_eur],
-        ["TVA 21 %",                     tva_eur_mwh,                                     tva_budget_eur],
-        ["**Total TTC**",                ttc_eur_mwh,                                     ttc_budget_eur],
+        ["Énergie — fixé",                      avg_fixed if avg_fixed is not None else 0.0,    fixed_mwh * (avg_fixed or 0.0)],
+        ["Énergie — restant au CAL",           cal_now,                                        rest_mwh * cal_now],
+        ["Énergie — moyenne pondérée",         energy_eur_mwh,                                 energy_budget],
+        ["Transport (Elia)",                   transport,                                      transport * total_mwh],
+        ["Distribution — variable",            dso_var,                                        dso_var * total_mwh],
+        ["Distribution — fixe → €/MWh (1 site)", dso_fixe_eur_mwh,                              dso_fixe_an],
+        ["Sous-total HT",                      ht_eur_mwh,                                     ht_budget],
+        ["TVA 21 %",                           tva_eur_mwh,                                    tva_budget],
+        ["Total TTC",                          ttc_eur_mwh,                                    ttc_budget],
     ], columns=["Poste", "€/MWh", "€ / an"])
-    st.dataframe(df, use_container_width=True)
+
+    st.dataframe(
+        df.style.format({"€/MWh": lambda v: price_eur_mwh(v),
+                         "€ / an": lambda v: eur(v, 0)}),
+        use_container_width=True
+    )
 
     st.caption("Règles : 1) Énergie = (fixé) + (restant au CAL). 2) Réseau = Transport + Distribution (variable + fixe pro-raté). "
-               "3) Surcharges régionales (Wallonie) incluses dans la distribution. 4) Contribution fédérale laissée de côté pour l’instant.")
+               "3) Surcharges régionales (Wallonie) incluses dans la distribution. 4) Contribution fédérale : à ajouter plus tard.")
+
 # ----------------------------- Réseau (PLACEHOLDER à remplacer par tes vraies valeurs)
 NETWORK_TABLE = {
     (2026, "ORES", "BT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 65.0, "dso_fixe_eur_an": 120.0},
     (2026, "ORES", "MT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 30.0, "dso_fixe_eur_an": 600.0},
     (2026, "RESA", "BT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 60.0, "dso_fixe_eur_an": 150.0},
     (2026, "RESA", "MT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 28.0, "dso_fixe_eur_an": 620.0},
-    # TODO: ajoute 2027/2028 + AIEG/AIESH/REW quand tu as les barèmes
+    # TODO : ajoute 2027/2028 + AIEG/AIESH/REW quand tu as les barèmes officiels
 }
 
 def _seg_code(label: str) -> str:
@@ -700,63 +722,18 @@ def _get_network(annee: int, dso: str, seg_label: str):
     key = (annee, dso, _seg_code(seg_label))
     ref = NETWORK_TABLE.get(key)
     if not ref:
-        return 0.0, 0.0, 0.0  # jamais None -> pas de crash UI
+        return 0.0, 0.0, 0.0  # pas de None -> jamais de crash UI
     return float(ref["transport_eur_mwh"]), float(ref["dso_var_eur_mwh"]), float(ref["dso_fixe_eur_an"])
 
-    # --- TVA (B2B = 21 %)
-    st.markdown("### Taxes")
-    coltx1, coltx2 = st.columns(2)
-    with coltx1:
-        tva_rate = st.selectbox("TVA", ["21 % (B2B)","6 % (résidentiel)"], index=0, key="tc_tva_sel")
-    tva = 0.21 if "21" in tva_rate else 0.06
-    with coltx2:
-        show_contrib_placeholder = st.toggle("Afficher un champ 'Contribution fédérale' (optionnel)", value=False, key="tc_show_cf")
-    contrib_fed = 0.0
-    if show_contrib_placeholder:
-        contrib_fed = st.number_input("Contribution fédérale (€/MWh) — optionnel", min_value=0.0, step=0.1, value=0.0, key="tc_cf")
+def _dsos_for_year(annee: int):
+    return sorted({dso for (y, dso, seg) in NETWORK_TABLE.keys() if y == annee})
 
-    # --- Calculs
-    energie_eur_mwh = float(blended_price)
-    reseau_eur_mwh = transport_eur_mwh + dso_var + dso_fix_per_mwh
-    ht_eur_mwh = energie_eur_mwh + reseau_eur_mwh + contrib_fed
-    tva_eur_mwh = ht_eur_mwh * tva
-    ttc_eur_mwh = ht_eur_mwh + tva_eur_mwh
-    budget_annuel_ttc = ttc_eur_mwh * total_mwh
+def _segments_for(annee: int, dso: str):
+    label = {"BT": "BT (≤56 kVA)", "MT": "MT (>56 kVA)"}
+    segs = sorted({seg for (y, dd, seg) in NETWORK_TABLE.keys() if y == annee and dd == dso})
+    return [label[s] for s in segs]
 
-    # --- Récap & tableau détaillé
-    st.markdown("### Récapitulatif")
-    k1, k2, k3 = st.columns(3)
-    k1.metric("Énergie moyenne (€/MWh)", f"{energie_eur_mwh:,.2f}".replace(",", " "))
-    k2.metric("Réseau (€/MWh)", f"{reseau_eur_mwh:,.2f}".replace(",", " "))
-    k3.metric("Total TTC (€/MWh)", f"{ttc_eur_mwh:,.2f}".replace(",", " "))
 
-    b1, b2 = st.columns(2)
-    with b1:
-        st.metric("Total HT (€/MWh)", f"{ht_eur_mwh:,.2f}".replace(",", " "))
-        st.metric(f"TVA {int(tva*100)} % (€/MWh)", f"{tva_eur_mwh:,.2f}".replace(",", " "))
-    with b2:
-        st.metric("Budget annuel TTC (€/an)", f"{budget_annuel_ttc:,.0f}".replace(",", " "))
-
-    st.markdown("#### Décomposition (€/MWh)")
-    rows = [
-        ("Énergie (fixations + CAL)", energie_eur_mwh),
-        ("Transport Elia", transport_eur_mwh),
-        ("Distribution variable", dso_var),
-        ("Distribution fixe → €/MWh", dso_fix_per_mwh),
-    ]
-    if contrib_fed > 0:
-        rows.append(("Contribution fédérale (optionnel)", contrib_fed))
-    rows.extend([
-        ("Sous-total HT", ht_eur_mwh),
-        (f"TVA {int(tva*100)} %", tva_eur_mwh),
-        ("Total TTC", ttc_eur_mwh),
-    ])
-    df = pd.DataFrame(rows, columns=["Composante","€/MWh"])
-    st.dataframe(df, use_container_width=True)
-
-    st.caption("Note : en Wallonie, les surcharges régionales (CV, cogénération) sont incluses dans le tarif de distribution du GRD. "
-               "Ne pas les ajouter séparément. La Contribution fédérale (CREG) peut être ajoutée plus tard quand tu auras le barème officiel.")
-    
 # ===================== NAVIGATION PERSISTANTE (top-level) =====================
 NAV_ITEMS = ["📈 Marché", "📒 Contrats passés", "🧮 Simulation & Couverture", "💶 Coût total (réel)"] 
 
