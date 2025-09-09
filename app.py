@@ -696,28 +696,89 @@ def render_page_simulation():
     with g2028: render_contract_module("Couverture du contrat 2028", ns="y2028")
 
 # ---------- Page 4 : Coût total (réel) — résumé simple
+# ---------- Page 4 : Coût total (réel) — résumé simple & robuste
+
+def _dsos_for_year(annee: int):
+    """Liste des GRD disponibles pour l'année (d'après NETWORK_TABLE)."""
+    try:
+        return sorted({dso for (y, dso, seg) in NETWORK_TABLE.keys() if y == annee})
+    except Exception:
+        return []
+
+def _segments_for(annee: int, dso: str):
+    """Labels UI de segments disponibles pour (année, dso)."""
+    label = {"BT": "BT (≤56 kVA)", "MT": "MT (>56 kVA)"}
+    try:
+        segs = sorted({seg for (y, dd, seg) in NETWORK_TABLE.keys() if y == annee and dd == dso})
+        return [label[s] for s in segs if s in label]
+    except Exception:
+        return []
+
+def _blended_energy(ns: str):
+    """
+    Retourne: (blended €/MWh, fixed_mwh, avg_fixed €/MWh|None, rest_mwh, cal_now €/MWh)
+    Énergie moyenne pondérée = (fixé au prix moyen des clics) + (restant au CAL).
+    """
+    total, fixed_mwh, avg_fixed, rest_mwh, cal_now = _year_state(ns)
+    if total <= 0:
+        return None, 0.0, None, 0.0, float(cal_now or 0.0)
+    if fixed_mwh <= 0:
+        return float(cal_now or 0.0), 0.0, None, float(total), float(cal_now or 0.0)
+    avg_fixed = float(avg_fixed or 0.0)
+    blended = ((avg_fixed * fixed_mwh) + (float(cal_now or 0.0) * rest_mwh)) / float(total)
+    return float(blended), float(fixed_mwh), avg_fixed, float(rest_mwh), float(cal_now or 0.0)
+
 
 # ---------- Page 4 : Coût total (réel) — résumé simple, stable & lisible
 
+def _seg_code(label: str) -> str:
+    return "BT" if label.startswith("BT") else "MT"
+
+def _get_network(annee: int, dso: str, seg_label: str):
+    key = (annee, dso, _seg_code(seg_label))
+    ref = NETWORK_TABLE.get(key)
+    if not ref:
+        # jamais None -> pas de crash UI
+        return 0.0, 0.0, 0.0
+    return float(ref["transport_eur_mwh"]), float(ref["dso_var_eur_mwh"]), float(ref["dso_fixe_eur_an"])
+
+def _dsos_for_year(annee: int):
+    try:
+        return sorted({dso for (y, dso, seg) in NETWORK_TABLE.keys() if y == annee})
+    except Exception:
+        return []
+
+def _segments_for(annee: int, dso: str):
+    label = {"BT": "BT (≤56 kVA)", "MT": "MT (>56 kVA)"}
+    try:
+        segs = sorted({seg for (y, dd, seg) in NETWORK_TABLE.keys() if y == annee and dd == dso})
+        return [label[s] for s in segs if s in label]
+    except Exception:
+        return []
+
 def _read_energy_state(ns: str):
-    """Lit l'état de l'année ns et renvoie: total, fixed_mwh, avg_fixed|None, rest_mwh, cal_now."""
+    """
+    Lit l'état de l'année ns et renvoie:
+    total_mwh, fixed_mwh, avg_fixed (€/MWh|None), rest_mwh, cal_now (€/MWh)
+    """
     total, fixed_mwh, avg_fixed, rest_mwh, cal_now = _year_state(ns)
     return float(total or 0.0), float(fixed_mwh or 0.0), (None if avg_fixed is None else float(avg_fixed)), float(rest_mwh or 0.0), float(cal_now or 0.0)
 
 def render_page_total_cost():
     ensure_cal_used()
 
-    # —— CSS pour l’équation et les sous-totaux (injectée 1x)
+    # ---- CSS (injectée 1 fois) : styles pour les blocs de résumé
     if not st.session_state.get("_css_page4_done"):
         st.markdown("""
         <style>
           .eq-card {padding:14px 16px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;}
           .eq-sum  {padding:14px 16px;border:1px solid #d1d5db;border-radius:10px;background:#f3f4f6;}
           .muted   {color:#6b7280;}
-          .big     {font-size:28px;font-weight:900;}
+          .big     {font-size:26px;font-weight:800;}
           .mid     {font-size:18px;font-weight:700;}
           .center  {text-align:center;}
           .op      {font-size:28px; line-height:1; font-weight:700; color:#9ca3af;}
+          .pill    {display:inline-block;padding:2px 10px;border-radius:999px;background:#eef2ff;color:#3730a3;font-weight:700;}
         </style>
         """, unsafe_allow_html=True)
         st.session_state["_css_page4_done"] = True
@@ -725,33 +786,28 @@ def render_page_total_cost():
     st.subheader("💶 Coût total (réel) — Résumé")
     st.caption("Énergie = (fixé au prix moyen des clics) + (restant au CAL). Réseau = Transport (Elia) + Distribution (GRD). TVA = 21 % (B2B).")
 
-    # 1) Sélecteurs **sans reset** d’autres clés
+    # ---- Sélecteurs stables (ne modifient jamais les autres clés)
     year_map = {"2026":"y2026", "2027":"y2027", "2028":"y2028"}
     year = st.radio("Année", list(year_map.keys()), horizontal=True, key="tc_year")
     ns = year_map[year]
     annee_int = int(year)
 
     dsos = _dsos_for_year(annee_int) or ["ORES","RESA","AIEG","AIESH","REW"]
-    # IMPORTANT: ne corrige l'état que si la valeur courante est invalide
-    if "tc_dso" not in st.session_state:
-        st.session_state["tc_dso"] = dsos[0]
-    elif st.session_state["tc_dso"] not in dsos:
+    if st.session_state.get("tc_dso") not in dsos:
         st.session_state["tc_dso"] = dsos[0]
     dso = st.selectbox("GRD (distributeur)", options=dsos, key="tc_dso")
 
     seg_opts = _segments_for(annee_int, dso) or ["BT (≤56 kVA)","MT (>56 kVA)"]
-    if "tc_seg" not in st.session_state:
-        st.session_state["tc_seg"] = seg_opts[0]
-    elif st.session_state["tc_seg"] not in seg_opts:
+    if st.session_state.get("tc_seg") not in seg_opts:
         st.session_state["tc_seg"] = seg_opts[0]
     seg_label = st.selectbox("Tension", options=seg_opts, key="tc_seg")
 
-    # 2) Volumes / énergie (lecture seule)
+    # ---- Volumes & prix énergie (depuis l’onglet Couverture)
     total_mwh, fixed_mwh, avg_fixed, rest_mwh, cal_now = _read_energy_state(ns)
     if total_mwh <= 0:
         st.warning("Définis le 'Volume total (MWh)' dans **🧮 Simulation & Couverture**.")
         return
-    _, CAL_DATE = ensure_cal_used()
+    CAL_USED, CAL_DATE = ensure_cal_used()
 
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns(4)
@@ -761,23 +817,25 @@ def render_page_total_cost():
         c4.metric(f"CAL {year} ({CAL_DATE})", price_eur_mwh(cal_now))
     st.caption(f"Contexte : **{dso}** — **{seg_label}** — Année **{year}**")
 
-    # 3) Réseau (auto, 1 site)
+    # ---- Réseau (auto, 1 site)
     transport, dso_var, dso_fixe_an = _get_network(annee_int, dso, seg_label)
     dso_fixe_eur_mwh = (dso_fixe_an / total_mwh) if total_mwh > 0 else 0.0
 
-    # 4) Calculs (pas de “moyenne pondérée” affichée)
-    energy_fixed_eur  = fixed_mwh * (avg_fixed or 0.0)
-    energy_rest_eur   = rest_mwh  * cal_now
-    energy_budget_eur = energy_fixed_eur + energy_rest_eur
+    # ---- Calculs (⚠️ pas de 'moyenne pondérée' utilisée dans le tableau)
+    # Energie
+    energy_fixed_eur   = (fixed_mwh * (avg_fixed or 0.0))
+    energy_rest_eur    = (rest_mwh  * cal_now)
+    energy_budget_eur  = energy_fixed_eur + energy_rest_eur
+    # Réseau
+    reseau_eur_mwh     = transport + dso_var + dso_fixe_eur_mwh
+    reseau_budget_eur  = reseau_eur_mwh * total_mwh
+    # HT / TVA / TTC
+    ht_budget_eur      = energy_budget_eur + reseau_budget_eur
+    tva_rate           = 0.21
+    tva_budget_eur     = ht_budget_eur * tva_rate
+    ttc_budget_eur     = ht_budget_eur + tva_budget_eur
 
-    reseau_eur_mwh    = transport + dso_var + dso_fixe_eur_mwh
-    reseau_budget_eur = reseau_eur_mwh * total_mwh
-
-    ht_budget_eur     = energy_budget_eur + reseau_budget_eur
-    tva_budget_eur    = ht_budget_eur * 0.21
-    ttc_budget_eur    = ht_budget_eur + tva_budget_eur
-
-    # 5) Équation visuelle (+ et =) avec sous-totaux grisés et total en grand
+    # ---- Equation visuelle (avec + et =)
     st.markdown("#### Décomposition budgétaire (€/an)")
     row1 = st.columns([3.5,0.8,3.5,0.8,3.5])
     with row1[0]:
@@ -833,7 +891,7 @@ def render_page_total_cost():
         st.markdown("<div class='eq-sum'><div class='muted'>Total TTC</div>"
                     f"<div class='big'>{eur(ttc_budget_eur, 0)}</div></div>", unsafe_allow_html=True)
 
-    # 6) Tableau récap (€/MWh & €/an) — sans “moyenne pondérée”
+    # ---- Tableau récap clair (€/MWh & €/an) — SANS “moyenne pondérée”
     st.markdown("### Tableau récapitulatif")
     df = pd.DataFrame([
         ["Énergie — fixé",                          (avg_fixed or 0.0),     energy_fixed_eur],
@@ -847,12 +905,13 @@ def render_page_total_cost():
         ["**TOTAL TTC**",                           None,                    ttc_budget_eur],
     ], columns=["Poste", "€/MWh", "€ / an"])
 
+    # colorisation des lignes de sous-total / total
     def _row_style(row):
         label = str(row["Poste"])
         if "SOUS-TOTAL" in label and "TOTAL" not in label:
             return ["background-color: #f3f4f6; font-weight: 700;" if c!="€/MWh" else "background-color: #f3f4f6;" for c in df.columns]
         if "TOTAL TTC" in label:
-            return ["background-color: #eef2ff; font-weight: 900;" if c!="€/MWh" else "background-color: #eef2ff;" for c in df.columns]
+            return ["background-color: #eef2ff; font-weight: 800;" if c!="€/MWh" else "background-color: #eef2ff;" for c in df.columns]
         return [""]*len(df.columns)
 
     st.dataframe(
@@ -863,7 +922,54 @@ def render_page_total_cost():
         use_container_width=True
     )
 
-   
+# ----------------------------- Réseau (PLACEHOLDER, à remplacer par barèmes officiels CWaPE/GRD)
+NETWORK_TABLE = {
+    # ===== 2026 =====
+    (2026, "ORES", "BT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 65.0, "dso_fixe_eur_an": 120.0},
+    (2026, "ORES", "MT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 30.0, "dso_fixe_eur_an": 600.0},
+    (2026, "RESA", "BT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 60.0, "dso_fixe_eur_an": 150.0},
+    (2026, "RESA", "MT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 28.0, "dso_fixe_eur_an": 620.0},
+    (2026, "AIEG", "BT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 66.0, "dso_fixe_eur_an": 140.0},
+    (2026, "AIEG", "MT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 32.0, "dso_fixe_eur_an": 680.0},
+    (2026, "AIESH","BT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 64.0, "dso_fixe_eur_an": 135.0},
+    (2026, "AIESH","MT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 31.0, "dso_fixe_eur_an": 665.0},
+    (2026, "REW",  "BT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 68.0, "dso_fixe_eur_an": 160.0},
+    (2026, "REW",  "MT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 33.0, "dso_fixe_eur_an": 690.0},
+
+    # ===== 2027 (placeholders conservateurs) =====
+    (2027, "ORES", "BT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 66.0, "dso_fixe_eur_an": 122.0},
+    (2027, "ORES", "MT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 30.5, "dso_fixe_eur_an": 605.0},
+    (2027, "RESA", "BT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 61.0, "dso_fixe_eur_an": 152.0},
+    (2027, "RESA", "MT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 28.5, "dso_fixe_eur_an": 625.0},
+    (2027, "AIEG", "BT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 67.0, "dso_fixe_eur_an": 142.0},
+    (2027, "AIEG", "MT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 32.5, "dso_fixe_eur_an": 685.0},
+    (2027, "AIESH","BT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 65.0, "dso_fixe_eur_an": 137.0},
+    (2027, "AIESH","MT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 31.5, "dso_fixe_eur_an": 670.0},
+    (2027, "REW",  "BT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 69.0, "dso_fixe_eur_an": 162.0},
+    (2027, "REW",  "MT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 33.5, "dso_fixe_eur_an": 695.0},
+
+    # ===== 2028 (placeholders conservateurs) =====
+    (2028, "ORES", "BT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 64.0, "dso_fixe_eur_an": 121.0},
+    (2028, "ORES", "MT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 29.8, "dso_fixe_eur_an": 602.0},
+    (2028, "RESA", "BT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 59.0, "dso_fixe_eur_an": 151.0},
+    (2028, "RESA", "MT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 28.0, "dso_fixe_eur_an": 623.0},
+    (2028, "AIEG", "BT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 66.0, "dso_fixe_eur_an": 141.0},
+    (2028, "AIEG", "MT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 32.0, "dso_fixe_eur_an": 682.0},
+    (2028, "AIESH","BT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 64.0, "dso_fixe_eur_an": 136.0},
+    (2028, "AIESH","MT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 31.0, "dso_fixe_eur_an": 668.0},
+    (2028, "REW",  "BT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 68.0, "dso_fixe_eur_an": 161.0},
+    (2028, "REW",  "MT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 33.0, "dso_fixe_eur_an": 692.0},
+}
+
+def _seg_code(label: str) -> str:
+    return "BT" if label.startswith("BT") else "MT"
+
+def _get_network(annee: int, dso: str, seg_label: str):
+    key = (annee, dso, _seg_code(seg_label))
+    ref = NETWORK_TABLE.get(key)
+    if not ref:
+        return 0.0, 0.0, 0.0  # pas de None -> jamais de crash UI
+    return float(ref["transport_eur_mwh"]), float(ref["dso_var_eur_mwh"]), float(ref["dso_fixe_eur_an"])
 
 
 # ===================== NAVIGATION PERSISTANTE (top-level) =====================
