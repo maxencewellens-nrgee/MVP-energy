@@ -10,28 +10,9 @@ import pytz
 import html as ihtml
 import unicodedata
 import urllib.parse  # ⚠️ corrige l’espace insécable après 'parse'
-
 # ----------------------------- Configuration
 st.set_page_config(page_title="MVP Énergie — BE Day-Ahead", layout="wide")
 st.title("Gérer mes contrats d'énergie")
-
-# ---- ONE-TIME INIT (ne s'exécute qu'une fois par session)
-if "INIT_DONE" not in st.session_state:
-    # Contrats 2026-2028 (ne pas écraser si déjà présent)
-    for ns in ["y2026", "y2027", "y2028"]:
-        st.session_state.setdefault(f"{ns}__total_mwh", 200.0)
-        st.session_state.setdefault(f"{ns}__max_clicks", 5)
-        st.session_state.setdefault(f"{ns}__clicks", [])
-
-    # Sélection Résumé (onglet 4)
-    st.session_state.setdefault("tc_year", "2026")
-    st.session_state.setdefault("tc_dso", "ORES")
-    st.session_state.setdefault("tc_seg", "BT (≤56 kVA)")
-
-    # Navigation
-    st.session_state.setdefault("page", "📈 Marché")
-
-    st.session_state["INIT_DONE"] = True
 
 # ----------------------------- Secrets / Token
 TOKEN = st.secrets.get("ENTSOE_TOKEN", "")
@@ -134,6 +115,23 @@ def _segments_for(annee: int, dso: str):
     except Exception:
         return []
 
+# ----------------------------- INIT état global (une fois)
+NS_LIST = ["y2026", "y2027", "y2028"]
+
+def init_state_once():
+    # valeurs par défaut stables
+    defaults_total = 200.0
+    defaults_max_clicks = 5
+
+    for ns in NS_LIST:
+        st.session_state.setdefault(f"{ns}__total_mwh", defaults_total)
+        st.session_state.setdefault(f"{ns}__max_clicks", defaults_max_clicks)
+        st.session_state.setdefault(f"{ns}__clicks", [])
+
+    # Sélections de l’onglet 4 (résumé)
+    st.session_state.setdefault("tc_year", "2026")
+    st.session_state.setdefault("tc_dso", "ORES")
+    st.session_state.setdefault("tc_seg", "BT (≤56 kVA)")
 
 # ----------------------------- Data market
 @st.cache_data(ttl=24*3600)
@@ -301,7 +299,19 @@ if daily.empty:
     st.error("Aucune donnée sur l'intervalle demandé.")
 else:
     st.subheader("Market Data & Actions")
+# init unique
+if "market_daily" not in st.session_state:
+    try:
+        st.session_state["market_daily"] = load_market(start_input, end_input)
+        st.session_state["market_params"] = (start_input, end_input, lookback)
+    except Exception as e:
+        st.error(f"Erreur : {e}")
+        st.stop()
 
+daily = st.session_state.get("market_daily", pd.DataFrame())
+
+# >>> APPELER ICI (après le load des données)
+init_state_once()
 
 # ===================== NAVIGATION PAR ONGLETS (plein écran) =====================
 
@@ -685,154 +695,232 @@ def render_page_simulation():
     with g2027: render_contract_module("Couverture du contrat 2027", ns="y2027")
     with g2028: render_contract_module("Couverture du contrat 2028", ns="y2028")
 
+# ---------- Page 4 : Coût total (réel) — résumé simple
+# ---------- Page 4 : Coût total (réel) — résumé simple & robuste
+
+def _dsos_for_year(annee: int):
+    """Liste des GRD disponibles pour l'année (d'après NETWORK_TABLE)."""
+    try:
+        return sorted({dso for (y, dso, seg) in NETWORK_TABLE.keys() if y == annee})
+    except Exception:
+        return []
+
+def _segments_for(annee: int, dso: str):
+    """Labels UI de segments disponibles pour (année, dso)."""
+    label = {"BT": "BT (≤56 kVA)", "MT": "MT (>56 kVA)"}
+    try:
+        segs = sorted({seg for (y, dd, seg) in NETWORK_TABLE.keys() if y == annee and dd == dso})
+        return [label[s] for s in segs if s in label]
+    except Exception:
+        return []
+
+def _blended_energy(ns: str):
+    """
+    Retourne: (blended €/MWh, fixed_mwh, avg_fixed €/MWh|None, rest_mwh, cal_now €/MWh)
+    Énergie moyenne pondérée = (fixé au prix moyen des clics) + (restant au CAL).
+    """
+    total, fixed_mwh, avg_fixed, rest_mwh, cal_now = _year_state(ns)
+    if total <= 0:
+        return None, 0.0, None, 0.0, float(cal_now or 0.0)
+    if fixed_mwh <= 0:
+        return float(cal_now or 0.0), 0.0, None, float(total), float(cal_now or 0.0)
+    avg_fixed = float(avg_fixed or 0.0)
+    blended = ((avg_fixed * fixed_mwh) + (float(cal_now or 0.0) * rest_mwh)) / float(total)
+    return float(blended), float(fixed_mwh), avg_fixed, float(rest_mwh), float(cal_now or 0.0)
 
 
 # ---------- Page 4 : Coût total (réel) — résumé simple, stable & lisible
 
+def _seg_code(label: str) -> str:
+    return "BT" if label.startswith("BT") else "MT"
+
+def _get_network(annee: int, dso: str, seg_label: str):
+    key = (annee, dso, _seg_code(seg_label))
+    ref = NETWORK_TABLE.get(key)
+    if not ref:
+        # jamais None -> pas de crash UI
+        return 0.0, 0.0, 0.0
+    return float(ref["transport_eur_mwh"]), float(ref["dso_var_eur_mwh"]), float(ref["dso_fixe_eur_an"])
+
+def _dsos_for_year(annee: int):
+    try:
+        return sorted({dso for (y, dso, seg) in NETWORK_TABLE.keys() if y == annee})
+    except Exception:
+        return []
+
+def _segments_for(annee: int, dso: str):
+    label = {"BT": "BT (≤56 kVA)", "MT": "MT (>56 kVA)"}
+    try:
+        segs = sorted({seg for (y, dd, seg) in NETWORK_TABLE.keys() if y == annee and dd == dso})
+        return [label[s] for s in segs if s in label]
+    except Exception:
+        return []
+
+def _read_energy_state(ns: str):
+    """
+    Lit l'état de l'année ns et renvoie:
+    total_mwh, fixed_mwh, avg_fixed (€/MWh|None), rest_mwh, cal_now (€/MWh)
+    """
+    total, fixed_mwh, avg_fixed, rest_mwh, cal_now = _year_state(ns)
+    return float(total or 0.0), float(fixed_mwh or 0.0), (None if avg_fixed is None else float(avg_fixed)), float(rest_mwh or 0.0), float(cal_now or 0.0)
+
 def render_page_total_cost():
     ensure_cal_used()
 
-    # --- CSS (visuels + / = , grisage sous-total, total en évidence)
-    st.markdown("""
-    <style>
-    .kpi {padding:12px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;margin-bottom:8px}
-    .kpi--muted {background:#f3f4f6;color:#6b7280}
-    .kpi--sum {background:#eef2ff}
-    .kpi--total {background:#111827;color:#fff}
-    .kpi__label {font-size:0.85rem;color:#6b7280;margin-bottom:2px}
-    .kpi__value {font-size:1.15rem;font-weight:600}
-    .eq {font-weight:700;padding:0 .35rem;display:flex;align-items:center;justify-content:center}
-    .eq--big {font-size:1.6rem}
-    </style>
-    """, unsafe_allow_html=True)
+    # ---- CSS (injectée 1 fois) : styles pour les blocs de résumé
+    if not st.session_state.get("_css_page4_done"):
+        st.markdown("""
+        <style>
+          .eq-card {padding:14px 16px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;}
+          .eq-sum  {padding:14px 16px;border:1px solid #d1d5db;border-radius:10px;background:#f3f4f6;}
+          .muted   {color:#6b7280;}
+          .big     {font-size:26px;font-weight:800;}
+          .mid     {font-size:18px;font-weight:700;}
+          .center  {text-align:center;}
+          .op      {font-size:28px; line-height:1; font-weight:700; color:#9ca3af;}
+          .pill    {display:inline-block;padding:2px 10px;border-radius:999px;background:#eef2ff;color:#3730a3;font-weight:700;}
+        </style>
+        """, unsafe_allow_html=True)
+        st.session_state["_css_page4_done"] = True
 
     st.subheader("💶 Coût total (réel) — Résumé")
     st.caption("Énergie = (fixé au prix moyen des clics) + (restant au CAL). Réseau = Transport (Elia) + Distribution (GRD). TVA = 21 % (B2B).")
 
-    # 1) Sélection Année + GRD + Tension (ne réinitialise rien)
-    year_map = {"2026": "y2026", "2027": "y2027", "2028": "y2028"}
+    # ---- Sélecteurs stables (ne modifient jamais les autres clés)
+    year_map = {"2026":"y2026", "2027":"y2027", "2028":"y2028"}
     year = st.radio("Année", list(year_map.keys()), horizontal=True, key="tc_year")
     ns = year_map[year]
     annee_int = int(year)
 
-    # Options selon la table réseau
-    def _dsos_for_year(annee: int):
-        try: return sorted({dso for (y,dso,seg) in NETWORK_TABLE.keys() if y==annee})
-        except: return []
-    def _segments_for(annee: int, dso: str):
-        label = {"BT":"BT (≤56 kVA)","MT":"MT (>56 kVA)"}
-        try:
-            segs = sorted({seg for (y,dd,seg) in NETWORK_TABLE.keys() if y==annee and dd==dso})
-            return [label[s] for s in segs if s in label]
-        except:
-            return []
-
     dsos = _dsos_for_year(annee_int) or ["ORES","RESA","AIEG","AIESH","REW"]
     if st.session_state.get("tc_dso") not in dsos:
         st.session_state["tc_dso"] = dsos[0]
-    dso = st.selectbox("GRD (distributeur)", dsos, key="tc_dso")
+    dso = st.selectbox("GRD (distributeur)", options=dsos, key="tc_dso")
 
     seg_opts = _segments_for(annee_int, dso) or ["BT (≤56 kVA)","MT (>56 kVA)"]
     if st.session_state.get("tc_seg") not in seg_opts:
         st.session_state["tc_seg"] = seg_opts[0]
-    seg_label = st.selectbox("Tension", seg_opts, key="tc_seg")
+    seg_label = st.selectbox("Tension", options=seg_opts, key="tc_seg")
 
-    # 2) Volumes & prix issus de l’onglet Couverture
-    total_mwh, fixed_mwh, avg_fixed, rest_mwh, cal_now = _year_state(ns)
+    # ---- Volumes & prix énergie (depuis l’onglet Couverture)
+    total_mwh, fixed_mwh, avg_fixed, rest_mwh, cal_now = _read_energy_state(ns)
     if total_mwh <= 0:
-        st.warning("Définis le **Volume total (MWh)** dans l’onglet **🧮 Simulation & Couverture**.")
+        st.warning("Définis le 'Volume total (MWh)' dans **🧮 Simulation & Couverture**.")
         return
-
     CAL_USED, CAL_DATE = ensure_cal_used()
+
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Volume total", mwh(total_mwh, 0))
         c2.metric("Fixé", mwh(fixed_mwh, 0))
         c3.metric("Restant (valorisé CAL)", mwh(rest_mwh, 0))
         c4.metric(f"CAL {year} ({CAL_DATE})", price_eur_mwh(cal_now))
-    st.caption(f"Contexte : **{dso}** — **{seg_label}** — **{year}**")
+    st.caption(f"Contexte : **{dso}** — **{seg_label}** — Année **{year}**")
 
-    # 3) Réseau (auto)
-    def _seg_code(label: str) -> str:
-        return "BT" if label.startswith("BT") else "MT"
-    def _get_network(annee: int, dso: str, seg_label: str):
-        ref = NETWORK_TABLE.get((annee, dso, _seg_code(seg_label)))
-        if not ref: return 0.0, 0.0, 0.0
-        return float(ref["transport_eur_mwh"]), float(ref["dso_var_eur_mwh"]), float(ref["dso_fixe_eur_an"])
-
+    # ---- Réseau (auto, 1 site)
     transport, dso_var, dso_fixe_an = _get_network(annee_int, dso, seg_label)
     dso_fixe_eur_mwh = (dso_fixe_an / total_mwh) if total_mwh > 0 else 0.0
 
-    # 4) Calculs (pas de “moyenne pondérée” affichée en ligne)
-    energy_fixed_eur   = fixed_mwh * (avg_fixed or 0.0)
-    energy_rest_eur    = rest_mwh  * cal_now
-    energy_budget      = energy_fixed_eur + energy_rest_eur
-    energy_eur_mwh     = energy_budget / total_mwh  # OK pour l’affichage moyen
-
+    # ---- Calculs (⚠️ pas de 'moyenne pondérée' utilisée dans le tableau)
+    # Energie
+    energy_fixed_eur   = (fixed_mwh * (avg_fixed or 0.0))
+    energy_rest_eur    = (rest_mwh  * cal_now)
+    energy_budget_eur  = energy_fixed_eur + energy_rest_eur
+    # Réseau
     reseau_eur_mwh     = transport + dso_var + dso_fixe_eur_mwh
-    reseau_budget      = reseau_eur_mwh * total_mwh
-
-    ht_budget          = energy_budget + reseau_budget
-    ht_eur_mwh         = energy_eur_mwh + reseau_eur_mwh
-
+    reseau_budget_eur  = reseau_eur_mwh * total_mwh
+    # HT / TVA / TTC
+    ht_budget_eur      = energy_budget_eur + reseau_budget_eur
     tva_rate           = 0.21
-    tva_budget         = ht_budget * tva_rate
-    tva_eur_mwh        = ht_eur_mwh * tva_rate
+    tva_budget_eur     = ht_budget_eur * tva_rate
+    ttc_budget_eur     = ht_budget_eur + tva_budget_eur
 
-    ttc_budget         = ht_budget + tva_budget
-    ttc_eur_mwh        = ht_eur_mwh + tva_eur_mwh
+    # ---- Equation visuelle (avec + et =)
+    st.markdown("#### Décomposition budgétaire (€/an)")
+    row1 = st.columns([3.5,0.8,3.5,0.8,3.5])
+    with row1[0]:
+        st.markdown("<div class='eq-card'><div class='muted'>Énergie — fixé</div>"
+                    f"<div class='mid'>{eur(energy_fixed_eur, 0)}</div>"
+                    f"<div class='muted'>{mwh(fixed_mwh,0)} × {price_eur_mwh((avg_fixed or 0.0))}</div></div>", unsafe_allow_html=True)
+    with row1[1]:
+        st.markdown("<div class='center op'>+</div>", unsafe_allow_html=True)
+    with row1[2]:
+        st.markdown("<div class='eq-card'><div class='muted'>Énergie — restant au CAL</div>"
+                    f"<div class='mid'>{eur(energy_rest_eur, 0)}</div>"
+                    f"<div class='muted'>{mwh(rest_mwh,0)} × {price_eur_mwh(cal_now)}</div></div>", unsafe_allow_html=True)
+    with row1[3]:
+        st.markdown("<div class='center op'>=</div>", unsafe_allow_html=True)
+    with row1[4]:
+        st.markdown("<div class='eq-sum'><div class='muted'>Énergie — sous-total</div>"
+                    f"<div class='mid'>{eur(energy_budget_eur, 0)}</div></div>", unsafe_allow_html=True)
 
-    # 5) Affichage "équation" très lisible
-    colA, colPlus1, colB, colPlus2, colC, colEq, colD = st.columns([3,0.5,3,0.5,3,0.5,3])
+    st.markdown("&nbsp;", unsafe_allow_html=True)
 
-    with colA:
-        st.markdown('<div class="kpi"><div class="kpi__label">Énergie — fixé</div>'
-                    f'<div class="kpi__value">{eur(energy_fixed_eur,0)}<br><span class="kpi--muted">{mwh(fixed_mwh,0)} × {price_eur_mwh(avg_fixed or 0.0)}</span></div></div>', unsafe_allow_html=True)
-    with colPlus1: st.markdown('<div class="eq">+</div>', unsafe_allow_html=True)
-    with colB:
-        st.markdown('<div class="kpi"><div class="kpi__label">Énergie — restant au CAL</div>'
-                    f'<div class="kpi__value">{eur(energy_rest_eur,0)}<br><span class="kpi--muted">{mwh(rest_mwh,0)} × {price_eur_mwh(cal_now)}</span></div></div>', unsafe_allow_html=True)
-    with colPlus2: st.markdown('<div class="eq">+</div>', unsafe_allow_html=True)
-    with colC:
-        st.markdown('<div class="kpi"><div class="kpi__label">Réseau</div>'
-                    f'<div class="kpi__value">{eur(reseau_budget,0)}<br><span class="kpi--muted">{price_eur_mwh(transport)} + {price_eur_mwh(dso_var)} + {price_eur_mwh(dso_fixe_eur_mwh)} (fixe prorata)</span></div></div>', unsafe_allow_html=True)
-    with colEq: st.markdown('<div class="eq eq--big">=</div>', unsafe_allow_html=True)
-    with colD:
-        st.markdown('<div class="kpi kpi--sum"><div class="kpi__label">Sous-total HT</div>'
-                    f'<div class="kpi__value">{eur(ht_budget,0)}</div></div>', unsafe_allow_html=True)
+    row2 = st.columns([3.5,0.8,3.5,0.8,3.5])
+    with row2[0]:
+        st.markdown("<div class='eq-card'><div class='muted'>Réseau — Transport (Elia)</div>"
+                    f"<div class='mid'>{eur(transport*total_mwh, 0)}</div>"
+                    f"<div class='muted'>{price_eur_mwh(transport)} × {mwh(total_mwh,0)}</div></div>", unsafe_allow_html=True)
+    with row2[1]:
+        st.markdown("<div class='center op'>+</div>", unsafe_allow_html=True)
+    with row2[2]:
+        st.markdown("<div class='eq-card'><div class='muted'>Réseau — Distribution variable</div>"
+                    f"<div class='mid'>{eur(dso_var*total_mwh, 0)}</div>"
+                    f"<div class='muted'>{price_eur_mwh(dso_var)} × {mwh(total_mwh,0)}</div></div>", unsafe_allow_html=True)
+    with row2[3]:
+        st.markdown("<div class='center op'>+</div>", unsafe_allow_html=True)
+    with row2[4]:
+        st.markdown("<div class='eq-card'><div class='muted'>Réseau — Fixe (1 site)</div>"
+                    f"<div class='mid'>{eur(dso_fixe_an, 0)}</div>"
+                    f"<div class='muted'>{price_eur_mwh(dso_fixe_eur_mwh)} × {mwh(total_mwh,0)}</div></div>", unsafe_allow_html=True)
 
-    # Ligne TVA
-    col1, colPlus, col2, colEq2, col3 = st.columns([3,0.5,3,0.5,3])
-    with col1:
-        st.markdown('<div class="kpi kpi--muted"><div class="kpi__label">TVA 21 %</div>'
-                    f'<div class="kpi__value">{eur(tva_budget,0)}'
-                    f'<br><span class="kpi--muted">{price_eur_mwh(tva_eur_mwh)} × {mwh(total_mwh,0)}</span>'
-                    f'</div></div>', unsafe_allow_html=True)
-    with colPlus: st.markdown('<div class="eq">+</div>', unsafe_allow_html=True)
-    with col2:
-        st.markdown('<div class="kpi kpi--muted"><div class="kpi__label">—</div><div class="kpi__value">&nbsp;</div></div>', unsafe_allow_html=True)
-    with colEq2: st.markdown('<div class="eq eq--big">=</div>', unsafe_allow_html=True)
-    with col3:
-        st.markdown('<div class="kpi kpi--total"><div class="kpi__label">TOTAL TTC (€/an)</div>'
-                    f'<div class="kpi__value" style="font-size:1.9rem;">{eur(ttc_budget,0)}</div>'
-                    f'<div class="kpi__label" style="margin-top:6px;">Soit {price_eur_mwh(ttc_eur_mwh)} en €/MWh</div>'
-                    '</div>', unsafe_allow_html=True)
+    st.markdown("&nbsp;", unsafe_allow_html=True)
 
-    # Tableau récap (utile, mais sans “moyenne pondérée”)
-    st.markdown("### Détail chiffré")
+    row3 = st.columns([3.5,0.8,3.5,0.8,3.5])
+    with row3[0]:
+        st.markdown("<div class='eq-sum'><div class='muted'>Sous-total HT</div>"
+                    f"<div class='mid'>{eur(ht_budget_eur, 0)}</div></div>", unsafe_allow_html=True)
+    with row3[1]:
+        st.markdown("<div class='center op'>+</div>", unsafe_allow_html=True)
+    with row3[2]:
+        st.markdown("<div class='eq-card'><div class='muted'>TVA 21 %</div>"
+                    f"<div class='mid'>{eur(tva_budget_eur, 0)}</div></div>", unsafe_allow_html=True)
+    with row3[3]:
+        st.markdown("<div class='center op'>=</div>", unsafe_allow_html=True)
+    with row3[4]:
+        st.markdown("<div class='eq-sum'><div class='muted'>Total TTC</div>"
+                    f"<div class='big'>{eur(ttc_budget_eur, 0)}</div></div>", unsafe_allow_html=True)
+
+    # ---- Tableau récap clair (€/MWh & €/an) — SANS “moyenne pondérée”
+    st.markdown("### Tableau récapitulatif")
     df = pd.DataFrame([
-        ["Énergie — fixé",                       (avg_fixed or 0.0),           energy_fixed_eur],
-        ["Énergie — restant au CAL",            cal_now,                       energy_rest_eur],
-        ["Transport (Elia)",                    transport,                     transport * total_mwh],
-        ["Distribution — variable",             dso_var,                       dso_var * total_mwh],
-        ["Distribution — fixe → €/MWh (1 site)",dso_fixe_eur_mwh,              dso_fixe_an],
-        ["Sous-total HT",                       ht_eur_mwh,                    ht_budget],
-        ["TVA 21 %",                            tva_eur_mwh,                   tva_budget],
-        ["Total TTC",                           ttc_eur_mwh,                   ttc_budget],
-    ], columns=["Poste","€/MWh","€ / an"])
-    st.dataframe(df.style.format({"€/MWh": lambda v: price_eur_mwh(v),
-                                  "€ / an": lambda v: eur(v,0)}),
-                 use_container_width=True)
+        ["Énergie — fixé",                          (avg_fixed or 0.0),     energy_fixed_eur],
+        ["Énergie — restant au CAL",               cal_now,                 energy_rest_eur],
+        ["Énergie — SOUS-TOTAL",                    None,                    energy_budget_eur],
+        ["Transport (Elia)",                        transport,               transport * total_mwh],
+        ["Distribution — variable",                 dso_var,                 dso_var * total_mwh],
+        ["Distribution — fixe → €/MWh (1 site)",    dso_fixe_eur_mwh,        dso_fixe_an],
+        ["**SOUS-TOTAL HT**",                       None,                    ht_budget_eur],
+        ["TVA 21 %",                                None,                    tva_budget_eur],
+        ["**TOTAL TTC**",                           None,                    ttc_budget_eur],
+    ], columns=["Poste", "€/MWh", "€ / an"])
+
+    # colorisation des lignes de sous-total / total
+    def _row_style(row):
+        label = str(row["Poste"])
+        if "SOUS-TOTAL" in label and "TOTAL" not in label:
+            return ["background-color: #f3f4f6; font-weight: 700;" if c!="€/MWh" else "background-color: #f3f4f6;" for c in df.columns]
+        if "TOTAL TTC" in label:
+            return ["background-color: #eef2ff; font-weight: 800;" if c!="€/MWh" else "background-color: #eef2ff;" for c in df.columns]
+        return [""]*len(df.columns)
+
+    st.dataframe(
+        df.style.apply(_row_style, axis=1).format({
+            "€/MWh": (lambda v: "" if (v is None or pd.isna(v)) else price_eur_mwh(float(v))),
+            "€ / an": (lambda v: eur(float(v), 0)),
+        }),
+        use_container_width=True
+    )
 
 # ----------------------------- Réseau (PLACEHOLDER, à remplacer par barèmes officiels CWaPE/GRD)
 NETWORK_TABLE = {
