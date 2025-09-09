@@ -621,17 +621,36 @@ def render_page_simulation():
     with g2028: render_contract_module("Couverture du contrat 2028", ns="y2028")
 
 # ---------- Page 4 : Coût total (réel) — résumé simple
-
 # ---------- Page 4 : Coût total (réel) — résumé simple & robuste
+
+def _dsos_for_year(annee: int):
+    """Liste des GRD disponibles pour l'année (d'après NETWORK_TABLE)."""
+    try:
+        return sorted({dso for (y, dso, seg) in NETWORK_TABLE.keys() if y == annee})
+    except Exception:
+        return []
+
+def _segments_for(annee: int, dso: str):
+    """Labels UI de segments disponibles pour (année, dso)."""
+    label = {"BT": "BT (≤56 kVA)", "MT": "MT (>56 kVA)"}
+    try:
+        segs = sorted({seg for (y, dd, seg) in NETWORK_TABLE.keys() if y == annee and dd == dso})
+        return [label[s] for s in segs if s in label]
+    except Exception:
+        return []
+
 def _blended_energy(ns: str):
-    """(blended €/MWh, fixed_mwh, avg_fixed €/MWh|None, rest_mwh, cal_now €/MWh)"""
+    """
+    Retourne: (blended €/MWh, fixed_mwh, avg_fixed €/MWh|None, rest_mwh, cal_now €/MWh)
+    Énergie moyenne pondérée = (fixé au prix moyen des clics) + (restant au CAL).
+    """
     total, fixed_mwh, avg_fixed, rest_mwh, cal_now = _year_state(ns)
     if total <= 0:
         return None, 0.0, None, 0.0, float(cal_now or 0.0)
     if fixed_mwh <= 0:
-        return float(cal_now or 0.0), 0.0, None, total, float(cal_now or 0.0)
+        return float(cal_now or 0.0), 0.0, None, float(total), float(cal_now or 0.0)
     avg_fixed = float(avg_fixed or 0.0)
-    blended = ((avg_fixed * fixed_mwh) + (float(cal_now or 0.0) * rest_mwh)) / total
+    blended = ((avg_fixed * fixed_mwh) + (float(cal_now or 0.0) * rest_mwh)) / float(total)
     return float(blended), float(fixed_mwh), avg_fixed, float(rest_mwh), float(cal_now or 0.0)
 
 def render_page_total_cost():
@@ -640,27 +659,24 @@ def render_page_total_cost():
     st.subheader("💶 Coût total (réel) — Résumé")
     st.caption("Énergie = (fixé au prix moyen des clics) + (restant au CAL). Réseau = Transport (Elia) + Distribution (GRD). TVA = 21 % (B2B).")
 
-   # 1) Année + GRD + Tension (dynamiques, sans reset des autres valeurs)
-year_map = {"2026":"y2026", "2027":"y2027", "2028":"y2028"}
+    # 1) Année + GRD + Tension (dynamiques, sans reset des autres valeurs)
+    year_map = {"2026": "y2026", "2027": "y2027", "2028": "y2028"}
+    year = st.radio("Année", list(year_map.keys()), horizontal=True, key="tc_year")
+    ns = year_map[year]
+    annee_int = int(year)
 
-# Année : lit/écrit dans l'état mais ne casse pas les autres sélections
-year = st.radio("Année", ["2026","2027","2028"], horizontal=True, key="tc_year")
-ns = year_map[year]
-annee_int = int(year)
+    dsos = _dsos_for_year(annee_int) or ["ORES", "RESA", "AIEG", "AIESH", "REW"]
+    # Ne change l’état que si la valeur courante est invalide
+    if st.session_state.get("tc_dso") not in dsos:
+        st.session_state["tc_dso"] = dsos[0]
+    dso = st.selectbox("GRD (distributeur)", options=dsos, key="tc_dso")
 
-# Options disponibles selon la table (sinon fallback)
-dsos = _dsos_for_year(annee_int) or ["ORES","RESA","AIEG","AIESH","REW"]
-if st.session_state.get("tc_dso") not in dsos:
-    # ne change QUE si la valeur courante est invalide
-    st.session_state["tc_dso"] = dsos[0]
-dso = st.selectbox("GRD (distributeur)", dsos, key="tc_dso")
+    seg_opts = _segments_for(annee_int, dso) or ["BT (≤56 kVA)", "MT (>56 kVA)"]
+    if st.session_state.get("tc_seg") not in seg_opts:
+        st.session_state["tc_seg"] = seg_opts[0]
+    seg_label = st.selectbox("Tension", options=seg_opts, key="tc_seg")
 
-seg_opts = _segments_for(annee_int, dso) or ["BT (≤56 kVA)","MT (>56 kVA)"]
-if st.session_state.get("tc_seg") not in seg_opts:
-    st.session_state["tc_seg"] = seg_opts[0]
-seg_label = st.selectbox("Tension", seg_opts, key="tc_seg")
-
-    # 2) Volumes / énergie
+    # 2) Volumes / énergie (lit la config déjà saisie dans l’onglet Couverture)
     total_mwh = float(st.session_state.get(f"{ns}__total_mwh", 0.0) or 0.0)
     if total_mwh <= 0:
         st.warning("Définis le 'Volume total (MWh)' dans **🧮 Simulation & Couverture**.")
@@ -675,29 +691,33 @@ seg_label = st.selectbox("Tension", seg_opts, key="tc_seg")
         c2.metric("Fixé", mwh(fixed_mwh, 0))
         c3.metric("Restant (valorisé CAL)", mwh(rest_mwh, 0))
         c4.metric(f"CAL {year} ({CAL_DATE})", price_eur_mwh(cal_now))
+    st.caption(f"Contexte sélectionné : **{dso}** — **{seg_label}** — Année **{year}**")
 
-    # 3) Réseau (auto, non éditable) — hypothèse MVP : 1 site
+    # 3) Réseau (auto, non modifiable) — hypothèse MVP : 1 site
     transport, dso_var, dso_fixe_an = _get_network(annee_int, dso, seg_label)
-    dso_fixe_eur_mwh = (dso_fixe_an) / total_mwh if total_mwh > 0 else 0.0
+    # Pro-rata du fixe annuel en €/MWh (1 site)
+    dso_fixe_eur_mwh = (float(dso_fixe_an) / total_mwh) if total_mwh > 0 else 0.0
 
-    # 4) Budgets / totaux (HT -> TVA -> TTC)
+    # 4) Budgets / totaux
+    # Énergie : budget = (fixé × avg_fixed) + (restant × CAL)
     energy_budget = (fixed_mwh * (avg_fixed or 0.0)) + (rest_mwh * cal_now)
-    energy_eur_mwh = float(blended)
+    energy_eur_mwh = float(blended or 0.0)
 
-    reseau_eur_mwh = transport + dso_var + dso_fixe_eur_mwh
+    # Réseau
+    reseau_eur_mwh = float(transport + dso_var + dso_fixe_eur_mwh)
     reseau_budget = reseau_eur_mwh * total_mwh
 
     ht_eur_mwh = energy_eur_mwh + reseau_eur_mwh
-    ht_budget   = energy_budget + reseau_budget
+    ht_budget = energy_budget + reseau_budget
 
     tva_rate = 0.21
     tva_eur_mwh = ht_eur_mwh * tva_rate
-    tva_budget   = ht_budget * tva_rate
+    tva_budget = ht_budget * tva_rate
 
     ttc_eur_mwh = ht_eur_mwh + tva_eur_mwh
-    ttc_budget   = ht_budget + tva_budget
+    ttc_budget = ht_budget + tva_budget
 
-    # 5) KPIs avec format FR-BE
+    # 5) KPIs — formats FR-BE via helpers
     k1, k2, k3 = st.columns(3)
     k1.metric("Total HT (€/MWh)", price_eur_mwh(ht_eur_mwh))
     k2.metric("TVA 21 % (€/MWh)", price_eur_mwh(tva_eur_mwh))
@@ -707,30 +727,31 @@ seg_label = st.selectbox("Tension", seg_opts, key="tc_seg")
     b1.metric("Budget HT (€/an)", eur(ht_budget, 0))
     b2.metric("Budget TTC (€/an)", eur(ttc_budget, 0))
 
-    # 6) Tableau récap — colonnes formatées
+    # 6) Tableau récapitulatif (€/MWh & €)
     st.markdown("### Tableau récapitulatif")
     df = pd.DataFrame([
-        ["Énergie — fixé",                      avg_fixed if avg_fixed is not None else 0.0,    fixed_mwh * (avg_fixed or 0.0)],
-        ["Énergie — restant au CAL",           cal_now,                                        rest_mwh * cal_now],
-        ["Énergie — moyenne pondérée",         energy_eur_mwh,                                 energy_budget],
-        ["Transport (Elia)",                   transport,                                      transport * total_mwh],
-        ["Distribution — variable",            dso_var,                                        dso_var * total_mwh],
-        ["Distribution — fixe → €/MWh (1 site)", dso_fixe_eur_mwh,                              dso_fixe_an],
-        ["Sous-total HT",                      ht_eur_mwh,                                     ht_budget],
-        ["TVA 21 %",                           tva_eur_mwh,                                    tva_budget],
-        ["Total TTC",                          ttc_eur_mwh,                                    ttc_budget],
+        ["Énergie — fixé",                         (avg_fixed if avg_fixed is not None else 0.0),   fixed_mwh * (avg_fixed or 0.0)],
+        ["Énergie — restant au CAL",              cal_now,                                         rest_mwh * cal_now],
+        ["Énergie — moyenne pondérée",            energy_eur_mwh,                                  energy_budget],
+        ["Transport (Elia)",                      transport,                                       transport * total_mwh],
+        ["Distribution — variable",               dso_var,                                         dso_var * total_mwh],
+        ["Distribution — fixe → €/MWh (1 site)",  dso_fixe_eur_mwh,                                dso_fixe_an],  # € = fixe annuel total
+        ["Sous-total HT",                         ht_eur_mwh,                                      ht_budget],
+        ["TVA 21 %",                               tva_eur_mwh,                                     tva_budget],
+        ["Total TTC",                              ttc_eur_mwh,                                     ttc_budget],
     ], columns=["Poste", "€/MWh", "€ / an"])
 
     st.dataframe(
-        df.style.format({"€/MWh": lambda v: price_eur_mwh(v),
-                         "€ / an": lambda v: eur(v, 0)}),
+        df.style.format({
+            "€/MWh": lambda v: price_eur_mwh(v),
+            "€ / an": lambda v: eur(v, 0),
+        }),
         use_container_width=True
     )
 
     st.caption("Règles : 1) Énergie = (fixé) + (restant au CAL). 2) Réseau = Transport + Distribution (variable + fixe pro-raté). "
-               "3) Surcharges régionales (Wallonie) incluses dans la distribution. 4) Contribution fédérale : à ajouter plus tard.")
+               "3) Surcharges régionales (Wallonie) incluses dans la distribution. 4) Contribution fédérale : à ajouter ultérieurement.")
 
-# ----------------------------- Réseau (PLACEHOLDER à remplacer par tes vraies valeurs)
 # ----------------------------- Réseau (PLACEHOLDER, à remplacer par barèmes officiels CWaPE/GRD)
 NETWORK_TABLE = {
     # ===== 2026 =====
