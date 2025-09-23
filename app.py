@@ -583,15 +583,13 @@ def render_contract_module(title: str, ns: str):
 
         # --- Ajouter une fixation (widgets dans un form pour stopper les reruns pendant saisie)
         with st.container(border=True):
-            st.markdown("#### Ajouter une fixation")
-            with st.form(f"form_add_click_{ns}", clear_on_submit=False):
-        col1, col2, col3 = st.columns([1, 1, 1])
-        with col1:
-            new_date = st.date_input("Date", value=date.today(), key=date_key)
-        with col2:
-            new_price = st.number_input("Prix (€/MWh)", min_value=0.0, step=1.0, format="%.0f", key=price_key)
-        with col3:
-            new_vol = st.number_input("Volume (MWh)",  min_value=0.0, step=5.0, format="%.0f", key=vol_key)
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col1:
+        new_date = st.date_input("Date", value=date.today(), key=date_key)
+    with col2:
+        new_price = st.number_input("Prix (€/MWh)", min_value=0.0, step=1.0, format="%.0f", key=price_key)
+    with col3:
+        new_vol = st.number_input("Volume (MWh)", min_value=0.0, step=5.0, format="%.0f", key=vol_key)
 
         # ✅ bouton TOUJOURS actif dans un form
         submitted = st.form_submit_button("➕ Ajouter")
