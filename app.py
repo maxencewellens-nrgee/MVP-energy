@@ -582,37 +582,37 @@ def render_contract_module(title: str, ns: str):
         st.progress(min(cov_pct/100.0, 1.0), text=f"Couverture {cov_pct:.1f}%")
 
         # --- Ajouter une fixation (widgets dans un form pour stopper les reruns pendant saisie)
-        with st.container(border=True):
-            st.markdown("#### Ajouter une fixation")
-            with st.form(f"form_add_click_{ns}", clear_on_submit=False):
-                col1, col2, col3 = st.columns([1, 1, 1])
-                with col1:
-                    new_date = st.date_input("Date", value=date.today(), key=date_key)
-                with col2:
-                    new_price = st.number_input("Prix (€/MWh)", min_value=0.0, step=1.0,
+with st.container(border=True):
+    st.markdown("#### Ajouter une fixation")
+    with st.form(f"form_add_click_{ns}", clear_on_submit=False):
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col1:
+            new_date = st.date_input("Date", value=date.today(), key=date_key)
+        with col2:
+            new_price = st.number_input("Prix (€/MWh)", min_value=0.0, step=1.0,
                                         format="%.0f", key=price_key)
-                with col3:
-                new_vol = st.number_input("Volume (MWh)", min_value=0.0, step=5.0,
+        with col3:
+            new_vol = st.number_input("Volume (MWh)", min_value=0.0, step=5.0,
                                       format="%.0f", key=vol_key)
 
-                # Bouton placé **dans** le form → déclenche le submit
-                submitted = st.form_submit_button("➕ Ajouter")
+        # Bouton placé **dans** le form → déclenche le submit
+        submitted = st.form_submit_button("➕ Ajouter")
 
-            st.caption(f"Fixations utilisées : {len(clicks)}/{max_clicks} "
+    st.caption(f"Fixations utilisées : {len(clicks)}/{max_clicks} "
                "(réglages dans l’onglet dédié).")
 
-            if submitted:
-                errors = []
-                if len(clicks) >= int(max_clicks):
-                    errors.append(f"Limite atteinte ({int(max_clicks)} fixations).")
-                if rest_mwh <= 0:
-                    errors.append("Plus de volume restant à fixer.")
-                if new_vol <= 0 or new_price <= 0:
-                    errors.append("Prix et volume doivent être > 0.")
+    if submitted:
+        errors = []
+        if len(clicks) >= int(max_clicks):
+            errors.append(f"Limite atteinte ({int(max_clicks)} fixations).")
+        if rest_mwh <= 0:
+            errors.append("Plus de volume restant à fixer.")
+        if new_vol <= 0 or new_price <= 0:
+            errors.append("Prix et volume doivent être > 0.")
 
-                if errors:
-                        for e in errors:
-                        st.error(e)
+        if errors:
+            for e in errors:
+                st.error(e)
         else:
             vol_to_add = float(min(new_vol, rest_mwh))
             st.session_state.setdefault(clicks_key, []).append(
@@ -622,7 +622,6 @@ def render_contract_module(title: str, ns: str):
                 st.info(f"Volume saisi ({new_vol:.0f} MWh) réduit au restant "
                         f"({vol_to_add:.0f} MWh).")
             st.success("Fixation ajoutée.")
-            # réinitialise les champs
             for k in (price_key, vol_key):
                 st.session_state.pop(k, None)
             st.rerun()
