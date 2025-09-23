@@ -1,4 +1,4 @@
-# app.py — MVP Énergie (BE Day-Ahead + Contrat + FlexyPower CAL) — version épurée UX/UI
+# app.py — MVP Énergie (BE Day-Ahead + Contrat + FlexyPower CAL) — version revue/propre
 import streamlit as st
 import pandas as pd
 import altair as alt
@@ -10,14 +10,30 @@ import pytz
 import html as ihtml
 import unicodedata
 import urllib.parse  # ⚠️ corrige l’espace insécable après 'parse'
+
 # ----------------------------- Configuration
 st.set_page_config(page_title="MVP Énergie — BE Day-Ahead", layout="wide")
+
+# === Topbar compacte & font system (hack CSS très sobre + sticky header) ===
+if "_base_css_done" not in st.session_state:
+    st.markdown("""
+    <style>
+      .stApp header {position: sticky; top: 0; z-index: 50; background: white;}
+      /* resserrer l'UI */
+      .block-container {padding-top: 1.2rem;}
+      /* radio nav compact */
+      div[role="radiogroup"] > label {padding: 6px 10px; border-radius: 999px; margin-right: 6px; border:1px solid #e5e7eb;}
+      div[role="radiogroup"] > label[data-checked="true"] {background:#eef2ff; border-color:#c7d2fe;}
+    </style>
+    """, unsafe_allow_html=True)
+    st.session_state["_base_css_done"] = True
+
 st.title("Gérer mes contrats d'énergie")
 
 # ----------------------------- Secrets / Token
 TOKEN = st.secrets.get("ENTSOE_TOKEN", "")
 if not TOKEN:
-    st.error("Secret ENTSOE_TOKEN manquant (Streamlit Cloud → Settings → Secrets).")
+    st.error("Secret ENTSOE_TOKEN manquant (Streamlit Cloud → Settings → Secrets → ENTSOE_TOKEN).")
     st.stop()
 
 # ----------------------------- Constantes
@@ -30,13 +46,13 @@ client = EntsoePandasClient(api_key=TOKEN)
 NBSP = "\u00A0"  # espace insécable avant le symbole
 
 def _fmt_fr(val: float, dec: int = 2) -> str:
-    """Format nombre style FR-BE : 98.560,50 (milliers='.', décimales=',')."""
+    """Format FR-BE : 98.560,50 (milliers='.', décimales=',')."""
     if val is None:
         val = 0.0
     s = f"{float(val):,.{dec}f}"           # ex: 98,560.50 (US)
-    s = s.replace(",", " ")                # virgules -> fine space temporaire
+    s = s.replace(",", " ")                # virgules -> espace fine temporaire
     s = s.replace(".", ",")                # point décimal -> virgule
-    s = s.replace(" ", ".")                # fine space -> point milliers
+    s = s.replace(" ", ".")                # espace -> point milliers
     return s
 
 def eur(val: float, dec: int = 2) -> str:
@@ -51,8 +67,23 @@ def mwh(v: float, dec: int = 0) -> str:
 def fmt_be(d) -> str:
     return pd.to_datetime(d).strftime("%d/%m/%Y")
 
-# ----------------------------- RÉSEAU — TABLE & HELPERS (UNIQUE)
+# ----------------------------- Altair thème (cohérent, lisible)
+def _alt_theme():
+    return {
+        "config": {
+            "view": {"stroke": "transparent"},
+            "axis": {"labelFontSize": 12, "titleFontSize": 12, "grid": True, "gridOpacity": 0.2},
+            "legend": {"labelFontSize": 12, "title": None},
+            "range": {"category": ["#1f2937","#22c55e","#3b82f6","#f59e0b","#ef4444"]},
+            "font": "Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial"
+        }
+    }
+if "_alt_theme_done" not in st.session_state:
+    alt.themes.register("clean", _alt_theme)
+    alt.themes.enable("clean")
+    st.session_state["_alt_theme_done"] = True
 
+# ----------------------------- RÉSEAU — TABLE & HELPERS (UNIQUE)
 NETWORK_TABLE = {
     # ===== 2026 =====
     (2026, "ORES", "BT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 65.0, "dso_fixe_eur_an": 120.0},
@@ -95,22 +126,21 @@ def _seg_code(label: str) -> str:
     return "BT" if label.startswith("BT") else "MT"
 
 def _get_network(annee: int, dso: str, seg_label: str):
-    key = (annee, dso, _seg_code(seg_label))
-    ref = NETWORK_TABLE.get(key)
+    ref = NETWORK_TABLE.get((annee, dso, _seg_code(seg_label)))
     if not ref:
         return 0.0, 0.0, 0.0
     return float(ref["transport_eur_mwh"]), float(ref["dso_var_eur_mwh"]), float(ref["dso_fixe_eur_an"])
 
 def _dsos_for_year(annee: int):
     try:
-        return sorted({dso for (y, dso, seg) in NETWORK_TABLE.keys() if y == annee})
+        return sorted({d for (y, d, seg) in NETWORK_TABLE.keys() if y == annee})
     except Exception:
         return []
 
 def _segments_for(annee: int, dso: str):
     label = {"BT": "BT (≤56 kVA)", "MT": "MT (>56 kVA)"}
     try:
-        segs = sorted({seg for (y, dd, seg) in NETWORK_TABLE.keys() if y == annee and dd == dso})
+        segs = sorted({s for (y, dd, s) in NETWORK_TABLE.keys() if y == annee and dd == dso})
         return [label[s] for s in segs if s in label]
     except Exception:
         return []
@@ -119,15 +149,12 @@ def _segments_for(annee: int, dso: str):
 NS_LIST = ["y2026", "y2027", "y2028"]
 
 def init_state_once():
-    # valeurs par défaut stables
     defaults_total = 200.0
     defaults_max_clicks = 5
-
     for ns in NS_LIST:
         st.session_state.setdefault(f"{ns}__total_mwh", defaults_total)
         st.session_state.setdefault(f"{ns}__max_clicks", defaults_max_clicks)
         st.session_state.setdefault(f"{ns}__clicks", [])
-
     # Sélections de l’onglet 4 (résumé)
     st.session_state.setdefault("tc_year", "2026")
     st.session_state.setdefault("tc_dso", "ORES")
@@ -137,8 +164,8 @@ def init_state_once():
 @st.cache_data(ttl=24*3600)
 def fetch_daily(start_date: str, end_inclusive_date: str) -> pd.DataFrame:
     """
-    Récupère prix day-ahead (heure) via entsoe-py, agrège en jour (avg/mn/mx/n) en heure BE.
-    start_date, end_inclusive_date: 'YYYY-MM-DD'. end est inclus (on ajoute +1 jour côté API).
+    Prix day-ahead (heure) via entsoe-py, agrégés en jour (avg/mn/mx/n) en heure BE.
+    end est inclus (on ajoute +1 jour côté API).
     """
     start = pd.Timestamp(start_date, tz=tz_utc)
     end   = pd.Timestamp(end_inclusive_date, tz=tz_utc) + pd.Timedelta(days=1)  # exclusif
@@ -157,28 +184,20 @@ def fetch_daily(start_date: str, end_inclusive_date: str) -> pd.DataFrame:
     return out
 
 def decision_from_last(daily: pd.DataFrame, lookback_days: int = 180) -> dict:
-    """
-    Décision basée sur le dernier prix et quantiles P10/P30/P70 sur fenêtre de lookback.
-    """
     if daily.empty:
         return {"reco":"—","raison":"Pas de données.","last":None,"p10":None,"p30":None,"p70":None}
-
     df = daily.copy()
-    df["date"] = pd.to_datetime(df["date"])
+    df["date"] = pd.to_datetime(df["date"]).sort_values()
     df = df.sort_values("date")
-
     last_price = float(df.iloc[-1]["avg"])
     ref_end = df["date"].max()
     ref_start = ref_end - pd.Timedelta(days=lookback_days)
-
     ref = df[df["date"] >= ref_start]
     if len(ref) < 30:
         ref = df
-
     p10 = ref["avg"].quantile(0.10)
     p30 = ref["avg"].quantile(0.30)
     p70 = ref["avg"].quantile(0.70)
-
     if last_price <= p10:
         return {"reco":"FIXER 40–60 %","raison":f"Dernier prix {last_price:.2f} ≤ P10 {p10:.2f} : opportunité forte.",
                 "last":round(last_price,2),"p10":round(p10,2),"p30":round(p30,2),"p70":round(p70,2)}
@@ -214,7 +233,7 @@ def fetch_flexypower_cals(url: str = "https://flexypower.eu/prix-de-lenergie/", 
             if m:
                 try:
                     vals[f"CAL-{yy}"] = float(m.group(1).replace(",", "."))
-                except: 
+                except:
                     pass
         return vals
 
@@ -280,41 +299,28 @@ lookback    = LOOKBACK_DAYS
 
 # ----------------------------- Marché : chargement & affichage (AUTO)
 def load_market(start_date: str, end_date: str):
-    # skeleton loader : KPI placeholders + chart container
     with st.spinner("Récupération ENTSO-E (par mois)…"):
-        data = fetch_daily(start_date, end_date)
-    return data
+        return fetch_daily(start_date, end_date)
 
 # init unique
 if "market_daily" not in st.session_state:
     try:
-        st.session_state["market_daily"] = load_market(start_input, end_input)
+        st.session_state["market_daily"]  = load_market(start_input, end_input)
         st.session_state["market_params"] = (start_input, end_input, lookback)
     except Exception as e:
         st.error(f"Erreur : {e}")
         st.stop()
 
 daily = st.session_state.get("market_daily", pd.DataFrame())
-if daily.empty:
-    st.error("Aucune donnée sur l'intervalle demandé.")
-else:
+if not daily.empty:
     st.subheader("Market Data & Actions")
-# init unique
-if "market_daily" not in st.session_state:
-    try:
-        st.session_state["market_daily"] = load_market(start_input, end_input)
-        st.session_state["market_params"] = (start_input, end_input, lookback)
-    except Exception as e:
-        st.error(f"Erreur : {e}")
-        st.stop()
-
-daily = st.session_state.get("market_daily", pd.DataFrame())
+else:
+    st.error("Aucune donnée sur l'intervalle demandé.")
 
 # >>> APPELER ICI (après le load des données)
 init_state_once()
 
 # ===================== NAVIGATION PAR ONGLETS (plein écran) =====================
-
 def ensure_cal_used():
     """Stocke CAL_USED & CAL_DATE dans session (source FlexyPower + fallback)."""
     cal_used = st.session_state.get("CAL_USED")
@@ -340,7 +346,9 @@ def render_page_market(daily: pd.DataFrame):
     st.subheader("Historique prix marché électricité")
 
     vis = daily.copy()
-    vis["date"] = pd.to_datetime(vis["date"]).sort_values()
+    vis["date"] = pd.to_datetime(vis["date"])
+    vis = vis.sort_values("date")  # ✅ bug mineur corrigé : la série n'était pas triée sur le DF
+
     mm_window = st.selectbox("Moyenne mobile (jours)", [30, 60, 90], index=0, key="mm_win")
     vis["sma"] = vis["avg"].rolling(window=int(mm_window), min_periods=max(5, int(mm_window)//3)).mean()
 
@@ -401,30 +409,34 @@ def render_page_market(daily: pd.DataFrame):
     f2.metric(f"CAL-27 (élec) – {CAL_DATE}", price_eur_mwh(CAL_USED['y2027']))
     f3.metric(f"CAL-28 (élec) – {CAL_DATE}", price_eur_mwh(CAL_USED['y2028']))
 
-
 # ---------- Page 2 : Contrats passés (2024/2025) — saisie + récap
 def render_page_past():
     st.subheader("Contrats passés — 2024 & 2025")
 
     def edit(ns: str, label: str):
         vol_key, price_key, budg_key = f"{ns}__fixed_volume", f"{ns}__fixed_price", f"{ns}__fixed_budget"
-        if vol_key not in st.session_state:   st.session_state[vol_key] = 0.0
-        if price_key not in st.session_state: st.session_state[price_key] = 0.0
+        st.session_state.setdefault(vol_key, 0.0)
+        st.session_state.setdefault(price_key, 0.0)
 
         with st.container(border=True):
             st.markdown(f"**Contrat {label} — saisie**")
-            c1, c2, c3 = st.columns([1,1,1])
-            with c1: st.number_input("Volume (MWh)", min_value=0.0, step=5.0, format="%.0f", key=vol_key)
-            with c2: st.number_input("Prix (€/MWh)", min_value=0.0, step=1.0, format="%.0f", key=price_key)
-
+            # ✅ form = pas de rerun pendant la frappe
+            with st.form(f"form_past_{ns}", clear_on_submit=False):
+                c1, c2, c3 = st.columns([1,1,1])
+                with c1:
+                    st.number_input("Volume (MWh)", min_value=0.0, step=5.0, format="%.0f", key=vol_key)
+                with c2:
+                    st.number_input("Prix (€/MWh)", min_value=0.0, step=1.0, format="%.0f", key=price_key)
+                submitted = st.form_submit_button("Mettre à jour")
             vol   = float(st.session_state[vol_key])
             price = float(st.session_state[price_key])
             budget = vol * price
             st.session_state[budg_key] = budget
-            with c3: st.metric("Budget total", eur(budget))
+            c1, c2, c3 = st.columns([1,1,1])
+            with c3:
+                st.metric("Budget total", eur(budget))
             st.caption(f"Calcul : {mwh(vol,0)} × {price_eur_mwh(price) if price>0 else '—'} = {eur(budget)}")
 
-    # Saisie + récap compact
     edit("y2024", "2024")
     edit("y2025", "2025")
     st.markdown("### Récapitulatif")
@@ -438,7 +450,6 @@ def render_page_past():
             c1.metric("Volume", mwh(vol, 0))
             c2.metric("Prix", price_eur_mwh(price) if price > 0 else "—")
             c3.metric("Budget total", eur(budg))
-
 
 # ---------- Utilitaires simulation/contrats (sans sidebar)
 def _year_state(ns: str):
@@ -522,14 +533,11 @@ def render_year(ns: str, title: str):
                    "**déplace** du ‘projeté’ vers du ‘fixé’. Impact principal : **prix moyen du fixé** et **couverture**.")
 
 def render_contract_module(title: str, ns: str):
-    # On récupère les CAL (pour affichage) sans recréer les réglages ici
     CAL_USED, CAL_DATE = ensure_cal_used()
 
-    # -------------------- bloc visuel principal --------------------
     with st.container(border=True):
         st.subheader(title)
 
-        # --- Clés
         total_key   = f"{ns}__total_mwh"
         max_key     = f"{ns}__max_clicks"
         clicks_key  = f"{ns}__clicks"
@@ -542,23 +550,19 @@ def render_contract_module(title: str, ns: str):
         del_btn     = f"{ns}__btn_delete_click"
         dl_btn      = f"{ns}__dl_csv"
 
-        # === SÉCURITÉ: initialise si nécessaire (évite KeyError)
         st.session_state.setdefault(total_key, 200.0)
         st.session_state.setdefault(max_key, 5)
         st.session_state.setdefault(clicks_key, [])
 
-        # --- LECTURE (aucun widget de réglage ici)
         total_mwh  = float(st.session_state[total_key])
         max_clicks = int(st.session_state[max_key])
         clicks     = st.session_state[clicks_key]
         df_clicks  = pd.DataFrame(clicks)
 
-        # Typage safe
         if not df_clicks.empty:
             df_clicks["volume"] = pd.to_numeric(df_clicks["volume"], errors="coerce").fillna(0.0)
             df_clicks["price"]  = pd.to_numeric(df_clicks["price"],  errors="coerce").fillna(0.0)
 
-        # Couverture & prix moyen fixé
         fixed_mwh = float(df_clicks["volume"].sum()) if not df_clicks.empty else 0.0
         fixed_mwh = min(fixed_mwh, total_mwh) if total_mwh > 0 else 0.0
         rest_mwh  = max(0.0, total_mwh - fixed_mwh)
@@ -569,7 +573,6 @@ def render_contract_module(title: str, ns: str):
 
         cal_price  = st.session_state["CAL_USED"].get(ns)
 
-        # --- Synthèse couverture
         c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1, 1.2])
         c1.metric("Volume total", f"{total_mwh:.0f} MWh")
         c2.metric("Déjà fixé",    f"{fixed_mwh:.0f} MWh")
@@ -578,46 +581,28 @@ def render_contract_module(title: str, ns: str):
         c5.metric(f"CAL utilisé ({CAL_DATE})", f"{cal_price:.2f} €/MWh" if cal_price is not None else "—")
         st.progress(min(cov_pct/100.0, 1.0), text=f"Couverture {cov_pct:.1f}%")
 
-        # --- Budget (fixé uniquement)
-        with st.container(border=True):
-            st.markdown("#### Budget (déjà fixé)")
-            b1, b2, b3 = st.columns([1, 1, 1])
-            b1.metric("Volume fixé",      f"{fixed_mwh:.0f} MWh")
-            b2.metric("Prix moyen fixé",  f"{avg_fixed_mwh:.2f} €/MWh" if avg_fixed_mwh is not None else "—")
-            b3.metric("Budget fixé",      f"{total_cost_fixed:,.0f} €".replace(",", " "))
-            if avg_fixed_mwh is not None:
-                st.caption(
-                    f"Calcul : Σ(Volume × Prix) / Volume fixé = {avg_fixed_mwh:.2f} €/MWh "
-                    f"(Σ = {total_cost_fixed:,.0f} €, Volume = {fixed_mwh:.0f} MWh)".replace(",", " ")
-                )
-            else:
-                st.caption("Aucune fixation enregistrée pour l’instant (prix moyen du fixé indisponible).")
-
-        # --- Ajouter une fixation (widgets uniques par ns)
+        # --- Ajouter une fixation (widgets dans un form pour stopper les reruns pendant saisie)
         with st.container(border=True):
             st.markdown("#### Ajouter une fixation")
-            col1, col2, col3, col4 = st.columns([1, 1, 1, 0.8])
-            with col1:
-                new_date = st.date_input("Date", value=date.today(), key=date_key)
-            with col2:
-                new_price = st.number_input("Prix (€/MWh)", min_value=0.0, step=1.0, format="%.0f", key=price_key)
-            with col3:
-                new_vol = st.number_input("Volume (MWh)",  min_value=0.0, step=5.0, format="%.0f", key=vol_key)
-            with col4:
-                st.markdown("&nbsp;")
+            with st.form(f"form_add_click_{ns}", clear_on_submit=False):
+                col1, col2, col3 = st.columns([1, 1, 1])
+                with col1:
+                    new_date = st.date_input("Date", value=date.today(), key=date_key)
+                with col2:
+                    new_price = st.number_input("Prix (€/MWh)", min_value=0.0, step=1.0, format="%.0f", key=price_key)
+                with col3:
+                    new_vol = st.number_input("Volume (MWh)",  min_value=0.0, step=5.0, format="%.0f", key=vol_key)
+
                 used = len(clicks)
                 can_add = (used < int(max_clicks)) and (rest_mwh > 0) and (new_vol > 0) and (new_price > 0)
-                add_click = st.button("➕ Ajouter", key=add_btn, use_container_width=True, disabled=not can_add)
+                submitted = st.form_submit_button("➕ Ajouter", disabled=not can_add)
 
-            st.caption(f"Fixations utilisées : {used}/{max_clicks} (réglages dans l’onglet dédié).")
+            st.caption(f"Fixations utilisées : {len(clicks)}/{max_clicks} (réglages dans l’onglet dédié).")
 
-            if add_click:
-                # Re-get la liste (au cas où Streamlit recompose l’état)
+            if submitted:
                 lst = st.session_state.setdefault(clicks_key, [])
-                if used >= int(max_clicks):
+                if len(lst) >= int(max_clicks):
                     st.error(f"Limite atteinte ({int(max_clicks)} fixations).")
-                elif new_vol <= 0 or new_price <= 0:
-                    st.warning("Prix et volume doivent être > 0.")
                 else:
                     lst.append({"date": new_date, "price": float(new_price), "volume": float(new_vol)})
                     st.success("Fixation ajoutée.")
@@ -671,16 +656,21 @@ def render_contract_module(title: str, ns: str):
 
 # ---------- Page 3 : Simulation & Couverture (2026–2028)
 def render_page_simulation():
-    ensure_cal_used()  # garantit CAL_USED/CAL_DATE
+    ensure_cal_used()
     st.subheader("Réglages des contrats 2026–2028")
     for ns, y in [("y2026","2026"),("y2027","2027"),("y2028","2028")]:
         total_key, max_key = f"{ns}__total_mwh", f"{ns}__max_clicks"
-        if total_key not in st.session_state: st.session_state[total_key] = 200.0
-        if max_key not in st.session_state:   st.session_state[max_key]   = 5
+        st.session_state.setdefault(total_key, 200.0)
+        st.session_state.setdefault(max_key, 5)
         with st.expander(f"Contrat {y} — paramètres", expanded=(ns=="y2026")):
-            c1, c2 = st.columns([1,1])
-            with c1: st.number_input("Volume total (MWh)", min_value=0.0, step=5.0, format="%.0f", key=total_key)
-            with c2: st.number_input("Fixations max autorisées", min_value=1, max_value=20, step=1, format="%d", key=max_key)
+            # ✅ form pour éviter les reruns pendant la saisie
+            with st.form(f"form_params_{ns}", clear_on_submit=False):
+                c1, c2 = st.columns([1,1])
+                with c1:
+                    st.number_input("Volume total (MWh)", min_value=0.0, step=5.0, format="%.0f", key=total_key)
+                with c2:
+                    st.number_input("Fixations max autorisées", min_value=1, max_value=20, step=1, format="%d", key=max_key)
+                st.form_submit_button("Mettre à jour")
 
     st.subheader("Simuler une fixation aujourd’hui (en MWh, au CAL du jour)")
     sub2026, sub2027, sub2028 = st.tabs(["2026", "2027", "2028"])
@@ -696,78 +686,14 @@ def render_page_simulation():
     with g2028: render_contract_module("Couverture du contrat 2028", ns="y2028")
 
 # ---------- Page 4 : Coût total (réel) — résumé simple
-# ---------- Page 4 : Coût total (réel) — résumé simple & robuste
-
-def _dsos_for_year(annee: int):
-    """Liste des GRD disponibles pour l'année (d'après NETWORK_TABLE)."""
-    try:
-        return sorted({dso for (y, dso, seg) in NETWORK_TABLE.keys() if y == annee})
-    except Exception:
-        return []
-
-def _segments_for(annee: int, dso: str):
-    """Labels UI de segments disponibles pour (année, dso)."""
-    label = {"BT": "BT (≤56 kVA)", "MT": "MT (>56 kVA)"}
-    try:
-        segs = sorted({seg for (y, dd, seg) in NETWORK_TABLE.keys() if y == annee and dd == dso})
-        return [label[s] for s in segs if s in label]
-    except Exception:
-        return []
-
-def _blended_energy(ns: str):
-    """
-    Retourne: (blended €/MWh, fixed_mwh, avg_fixed €/MWh|None, rest_mwh, cal_now €/MWh)
-    Énergie moyenne pondérée = (fixé au prix moyen des clics) + (restant au CAL).
-    """
-    total, fixed_mwh, avg_fixed, rest_mwh, cal_now = _year_state(ns)
-    if total <= 0:
-        return None, 0.0, None, 0.0, float(cal_now or 0.0)
-    if fixed_mwh <= 0:
-        return float(cal_now or 0.0), 0.0, None, float(total), float(cal_now or 0.0)
-    avg_fixed = float(avg_fixed or 0.0)
-    blended = ((avg_fixed * fixed_mwh) + (float(cal_now or 0.0) * rest_mwh)) / float(total)
-    return float(blended), float(fixed_mwh), avg_fixed, float(rest_mwh), float(cal_now or 0.0)
-
-
-# ---------- Page 4 : Coût total (réel) — résumé simple, stable & lisible
-
-def _seg_code(label: str) -> str:
-    return "BT" if label.startswith("BT") else "MT"
-
-def _get_network(annee: int, dso: str, seg_label: str):
-    key = (annee, dso, _seg_code(seg_label))
-    ref = NETWORK_TABLE.get(key)
-    if not ref:
-        # jamais None -> pas de crash UI
-        return 0.0, 0.0, 0.0
-    return float(ref["transport_eur_mwh"]), float(ref["dso_var_eur_mwh"]), float(ref["dso_fixe_eur_an"])
-
-def _dsos_for_year(annee: int):
-    try:
-        return sorted({dso for (y, dso, seg) in NETWORK_TABLE.keys() if y == annee})
-    except Exception:
-        return []
-
-def _segments_for(annee: int, dso: str):
-    label = {"BT": "BT (≤56 kVA)", "MT": "MT (>56 kVA)"}
-    try:
-        segs = sorted({seg for (y, dd, seg) in NETWORK_TABLE.keys() if y == annee and dd == dso})
-        return [label[s] for s in segs if s in label]
-    except Exception:
-        return []
-
 def _read_energy_state(ns: str):
-    """
-    Lit l'état de l'année ns et renvoie:
-    total_mwh, fixed_mwh, avg_fixed (€/MWh|None), rest_mwh, cal_now (€/MWh)
-    """
     total, fixed_mwh, avg_fixed, rest_mwh, cal_now = _year_state(ns)
     return float(total or 0.0), float(fixed_mwh or 0.0), (None if avg_fixed is None else float(avg_fixed)), float(rest_mwh or 0.0), float(cal_now or 0.0)
 
 def render_page_total_cost():
     ensure_cal_used()
 
-    # ---- CSS (injectée 1 fois) : styles pour les blocs de résumé
+    # ---- CSS une fois : styles pour les blocs de résumé
     if not st.session_state.get("_css_page4_done"):
         st.markdown("""
         <style>
@@ -778,7 +704,6 @@ def render_page_total_cost():
           .mid     {font-size:18px;font-weight:700;}
           .center  {text-align:center;}
           .op      {font-size:28px; line-height:1; font-weight:700; color:#9ca3af;}
-          .pill    {display:inline-block;padding:2px 10px;border-radius:999px;background:#eef2ff;color:#3730a3;font-weight:700;}
         </style>
         """, unsafe_allow_html=True)
         st.session_state["_css_page4_done"] = True
@@ -786,7 +711,6 @@ def render_page_total_cost():
     st.subheader("💶 Coût total (réel) — Résumé")
     st.caption("Énergie = (fixé au prix moyen des clics) + (restant au CAL). Réseau = Transport (Elia) + Distribution (GRD). TVA = 21 % (B2B).")
 
-    # ---- Sélecteurs stables (ne modifient jamais les autres clés)
     year_map = {"2026":"y2026", "2027":"y2027", "2028":"y2028"}
     year = st.radio("Année", list(year_map.keys()), horizontal=True, key="tc_year")
     ns = year_map[year]
@@ -802,7 +726,6 @@ def render_page_total_cost():
         st.session_state["tc_seg"] = seg_opts[0]
     seg_label = st.selectbox("Tension", options=seg_opts, key="tc_seg")
 
-    # ---- Volumes & prix énergie (depuis l’onglet Couverture)
     total_mwh, fixed_mwh, avg_fixed, rest_mwh, cal_now = _read_energy_state(ns)
     if total_mwh <= 0:
         st.warning("Définis le 'Volume total (MWh)' dans **🧮 Simulation & Couverture**.")
@@ -817,11 +740,9 @@ def render_page_total_cost():
         c4.metric(f"CAL {year} ({CAL_DATE})", price_eur_mwh(cal_now))
     st.caption(f"Contexte : **{dso}** — **{seg_label}** — Année **{year}**")
 
-    # ---- Réseau (auto, 1 site)
     transport, dso_var, dso_fixe_an = _get_network(annee_int, dso, seg_label)
     dso_fixe_eur_mwh = (dso_fixe_an / total_mwh) if total_mwh > 0 else 0.0
 
-    # ---- Calculs (⚠️ pas de 'moyenne pondérée' utilisée dans le tableau)
     # Energie
     energy_fixed_eur   = (fixed_mwh * (avg_fixed or 0.0))
     energy_rest_eur    = (rest_mwh  * cal_now)
@@ -835,7 +756,6 @@ def render_page_total_cost():
     tva_budget_eur     = ht_budget_eur * tva_rate
     ttc_budget_eur     = ht_budget_eur + tva_budget_eur
 
-    # ---- Equation visuelle (avec + et =)
     st.markdown("#### Décomposition budgétaire (€/an)")
     row1 = st.columns([3.5,0.8,3.5,0.8,3.5])
     with row1[0]:
@@ -891,7 +811,6 @@ def render_page_total_cost():
         st.markdown("<div class='eq-sum'><div class='muted'>Total TTC</div>"
                     f"<div class='big'>{eur(ttc_budget_eur, 0)}</div></div>", unsafe_allow_html=True)
 
-    # ---- Tableau récap clair (€/MWh & €/an) — SANS “moyenne pondérée”
     st.markdown("### Tableau récapitulatif")
     df = pd.DataFrame([
         ["Énergie — fixé",                          (avg_fixed or 0.0),     energy_fixed_eur],
@@ -905,7 +824,6 @@ def render_page_total_cost():
         ["**TOTAL TTC**",                           None,                    ttc_budget_eur],
     ], columns=["Poste", "€/MWh", "€ / an"])
 
-    # colorisation des lignes de sous-total / total
     def _row_style(row):
         label = str(row["Poste"])
         if "SOUS-TOTAL" in label and "TOTAL" not in label:
@@ -922,65 +840,17 @@ def render_page_total_cost():
         use_container_width=True
     )
 
-# ----------------------------- Réseau (PLACEHOLDER, à remplacer par barèmes officiels CWaPE/GRD)
-NETWORK_TABLE = {
-    # ===== 2026 =====
-    (2026, "ORES", "BT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 65.0, "dso_fixe_eur_an": 120.0},
-    (2026, "ORES", "MT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 30.0, "dso_fixe_eur_an": 600.0},
-    (2026, "RESA", "BT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 60.0, "dso_fixe_eur_an": 150.0},
-    (2026, "RESA", "MT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 28.0, "dso_fixe_eur_an": 620.0},
-    (2026, "AIEG", "BT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 66.0, "dso_fixe_eur_an": 140.0},
-    (2026, "AIEG", "MT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 32.0, "dso_fixe_eur_an": 680.0},
-    (2026, "AIESH","BT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 64.0, "dso_fixe_eur_an": 135.0},
-    (2026, "AIESH","MT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 31.0, "dso_fixe_eur_an": 665.0},
-    (2026, "REW",  "BT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 68.0, "dso_fixe_eur_an": 160.0},
-    (2026, "REW",  "MT"): {"transport_eur_mwh": 9.05, "dso_var_eur_mwh": 33.0, "dso_fixe_eur_an": 690.0},
-
-    # ===== 2027 (placeholders conservateurs) =====
-    (2027, "ORES", "BT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 66.0, "dso_fixe_eur_an": 122.0},
-    (2027, "ORES", "MT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 30.5, "dso_fixe_eur_an": 605.0},
-    (2027, "RESA", "BT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 61.0, "dso_fixe_eur_an": 152.0},
-    (2027, "RESA", "MT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 28.5, "dso_fixe_eur_an": 625.0},
-    (2027, "AIEG", "BT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 67.0, "dso_fixe_eur_an": 142.0},
-    (2027, "AIEG", "MT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 32.5, "dso_fixe_eur_an": 685.0},
-    (2027, "AIESH","BT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 65.0, "dso_fixe_eur_an": 137.0},
-    (2027, "AIESH","MT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 31.5, "dso_fixe_eur_an": 670.0},
-    (2027, "REW",  "BT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 69.0, "dso_fixe_eur_an": 162.0},
-    (2027, "REW",  "MT"): {"transport_eur_mwh": 9.10, "dso_var_eur_mwh": 33.5, "dso_fixe_eur_an": 695.0},
-
-    # ===== 2028 (placeholders conservateurs) =====
-    (2028, "ORES", "BT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 64.0, "dso_fixe_eur_an": 121.0},
-    (2028, "ORES", "MT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 29.8, "dso_fixe_eur_an": 602.0},
-    (2028, "RESA", "BT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 59.0, "dso_fixe_eur_an": 151.0},
-    (2028, "RESA", "MT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 28.0, "dso_fixe_eur_an": 623.0},
-    (2028, "AIEG", "BT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 66.0, "dso_fixe_eur_an": 141.0},
-    (2028, "AIEG", "MT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 32.0, "dso_fixe_eur_an": 682.0},
-    (2028, "AIESH","BT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 64.0, "dso_fixe_eur_an": 136.0},
-    (2028, "AIESH","MT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 31.0, "dso_fixe_eur_an": 668.0},
-    (2028, "REW",  "BT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 68.0, "dso_fixe_eur_an": 161.0},
-    (2028, "REW",  "MT"): {"transport_eur_mwh": 9.00, "dso_var_eur_mwh": 33.0, "dso_fixe_eur_an": 692.0},
-}
-
-def _seg_code(label: str) -> str:
-    return "BT" if label.startswith("BT") else "MT"
-
-def _get_network(annee: int, dso: str, seg_label: str):
-    key = (annee, dso, _seg_code(seg_label))
-    ref = NETWORK_TABLE.get(key)
-    if not ref:
-        return 0.0, 0.0, 0.0  # pas de None -> jamais de crash UI
-    return float(ref["transport_eur_mwh"]), float(ref["dso_var_eur_mwh"]), float(ref["dso_fixe_eur_an"])
-
-
 # ===================== NAVIGATION PERSISTANTE (top-level) =====================
-NAV_ITEMS = ["📈 Marché", "📒 Contrats passés", "🧮 Simulation & Couverture", "💶 Coût total (réel)"] 
+NAV_ITEMS = ["📈 Marché", "📒 Contrats passés", "🧮 Simulation & Couverture", "💶 Coût total (réel)"]
 
-# Init une seule fois
+# Deep-linking léger via query param ?nav=
+q = st.query_params
 if "page" not in st.session_state:
-    st.session_state["page"] = NAV_ITEMS[0]
+    st.session_state["page"] = q.get("nav", NAV_ITEMS[0])
 
-# Nav horizontale persistante (ne PAS mettre index=…)
 page = st.radio("Navigation", NAV_ITEMS, key="page", horizontal=True, label_visibility="collapsed")
+# maj du query param (stable entre reruns)
+st.query_params["nav"] = page
 
 # Router en fonction de la page choisie
 if page == "📈 Marché":
@@ -990,4 +860,4 @@ elif page == "📒 Contrats passés":
 elif page == "🧮 Simulation & Couverture":
     render_page_simulation()
 else:
-    render_page_total_cost() 
+    render_page_total_cost()
