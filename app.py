@@ -583,8 +583,8 @@ def render_contract_module(title: str, ns: str):
 
         # --- Ajouter une fixation (widgets dans un form pour stopper les reruns pendant saisie)
         with st.container(border=True):
-    st.markdown("#### Ajouter une fixation")
-    with st.form(f"form_add_click_{ns}", clear_on_submit=False):
+            st.markdown("#### Ajouter une fixation")
+            with st.form(f"form_add_click_{ns}", clear_on_submit=False):
         col1, col2, col3 = st.columns([1, 1, 1])
         with col1:
             new_date = st.date_input("Date", value=date.today(), key=date_key)
