@@ -584,25 +584,28 @@ def render_contract_module(title: str, ns: str):
         # --- Ajouter une fixation (widgets dans un form pour stopper les reruns pendant saisie)
         with st.container(border=True):
             st.markdown("#### Ajouter une fixation")
-            with st.form(f"form_add_click_{ns}", clear_on_submit=False):
-                col1, col2, col3 = st.columns([1, 1, 1])
-                with col1:
-                    new_date = st.date_input("Date", value=date.today(), key=date_key)
-                with col2:
-                    new_price = st.number_input("Prix (€/MWh)", min_value=0.0, step=1.0, format="%.0f", key=price_key)
-                with col3:
-                    new_vol = st.number_input("Volume (MWh)",  min_value=0.0, step=5.0, format="%.0f", key=vol_key)
-
+            col1, col2, col3, col4 = st.columns([1, 1, 1, 0.8])
+            with col1:
+                new_date = st.date_input("Date", value=date.today(), key=date_key)
+            with col2:
+                new_price = st.number_input("Prix (€/MWh)", min_value=0.0, step=1.0, format="%.0f", key=price_key)
+            with col3:
+                new_vol = st.number_input("Volume (MWh)",  min_value=0.0, step=5.0, format="%.0f", key=vol_key)
+            with col4:
+                st.markdown("&nbsp;")
                 used = len(clicks)
                 can_add = (used < int(max_clicks)) and (rest_mwh > 0) and (new_vol > 0) and (new_price > 0)
-                submitted = st.form_submit_button("➕ Ajouter", disabled=not can_add)
+                add_click = st.button("➕ Ajouter", key=add_btn, use_container_width=True, disabled=not can_add)
 
-            st.caption(f"Fixations utilisées : {len(clicks)}/{max_clicks} (réglages dans l’onglet dédié).")
+            st.caption(f"Fixations utilisées : {used}/{max_clicks} (réglages dans l’onglet dédié).")
 
-            if submitted:
+            if add_click:
+                # Re-get la liste (au cas où Streamlit recompose l’état)
                 lst = st.session_state.setdefault(clicks_key, [])
-                if len(lst) >= int(max_clicks):
+                if used >= int(max_clicks):
                     st.error(f"Limite atteinte ({int(max_clicks)} fixations).")
+                elif new_vol <= 0 or new_price <= 0:
+                    st.warning("Prix et volume doivent être > 0.")
                 else:
                     lst.append({"date": new_date, "price": float(new_price), "volume": float(new_vol)})
                     st.success("Fixation ajoutée.")
