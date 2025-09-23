@@ -659,41 +659,59 @@ def render_contract_module(title: str, ns: str):
 
 # ---------- Page 3 : Simulation & Couverture (2026–2028)
 def render_page_simulation():
-    ensure_cal_used()
-        st.subheader("Réglages des contrats 2026–2028")
-        for ns, y in [("y2026","2026"),("y2027","2027"),("y2028","2028")]:
-    total_key, max_key = f"{ns}__total_mwh", f"{ns}__max_clicks"
+    ensure_cal_used()  # garantit CAL_USED/CAL_DATE
 
-    # ✅ init une seule fois
-    st.session_state.setdefault(total_key, 200.0)
-    st.session_state.setdefault(max_key, 5)
+    st.subheader("Réglages des contrats 2026–2028")
+    for ns, y in [("y2026", "2026"), ("y2027", "2027"), ("y2028", "2028")]:
+        total_key, max_key = f"{ns}__total_mwh", f"{ns}__max_clicks"
 
-    with st.expander(f"Contrat {y} — paramètres", expanded=(ns=="y2026")):
-        # ✅ le form empêche les reruns pendant la frappe
-        with st.form(f"form_params_{ns}", clear_on_submit=False):
-            c1, c2 = st.columns(2)
-            with c1:
-                st.number_input("Volume total (MWh)",
-                                min_value=0.0, step=5.0, format="%.0f",
-                                key=total_key)   # ⚠️ pas de 'value=' ici
-            with c2:
-                st.number_input("Fixations max autorisées",
-                                min_value=1, max_value=20, step=1, format="%d",
-                                key=max_key)     # ⚠️ pas de 'value=' ici
-            st.form_submit_button("Enregistrer")
+        # ✅ init une seule fois par clé
+        st.session_state.setdefault(total_key, 200.0)
+        st.session_state.setdefault(max_key, 5)
+
+        with st.expander(f"Contrat {y} — paramètres", expanded=(ns == "y2026")):
+            # ✅ le form empêche les reruns pendant la frappe
+            with st.form(f"form_params_{ns}", clear_on_submit=False):
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.number_input(
+                        "Volume total (MWh)",
+                        min_value=0.0,
+                        step=5.0,
+                        format="%.0f",
+                        key=total_key  # ⚠️ pas de 'value=' ici
+                    )
+                with c2:
+                    st.number_input(
+                        "Fixations max autorisées",
+                        min_value=1,
+                        max_value=20,
+                        step=1,
+                        format="%d",
+                        key=max_key  # ⚠️ pas de 'value=' ici
+                    )
+                st.form_submit_button("Enregistrer")
 
     st.subheader("Simuler une fixation aujourd’hui (en MWh, au CAL du jour)")
     sub2026, sub2027, sub2028 = st.tabs(["2026", "2027", "2028"])
-    with sub2026: render_year("y2026", "2026")
-    with sub2027: render_year("y2027", "2027")
-    with sub2028: render_year("y2028", "2028")
+    with sub2026:
+        render_year("y2026", "2026")
+    with sub2027:
+        render_year("y2027", "2027")
+    with sub2028:
+        render_year("y2028", "2028")
 
     st.divider()
     st.subheader("Couverture du contrat (gestion des fixations)")
-    g2026, g2027, g2028 = st.tabs(["Contrat 2026", "Contrat 2027", "Contrat 2028"])
-    with g2026: render_contract_module("Couverture du contrat 2026", ns="y2026")
-    with g2027: render_contract_module("Couverture du contrat 2027", ns="y2027")
-    with g2028: render_contract_module("Couverture du contrat 2028", ns="y2028")
+    g2026, g2027, g2028 = st.tabs(
+        ["Contrat 2026", "Contrat 2027", "Contrat 2028"]
+    )
+    with g2026:
+        render_contract_module("Couverture du contrat 2026", ns="y2026")
+    with g2027:
+        render_contract_module("Couverture du contrat 2027", ns="y2027")
+    with g2028:
+        render_contract_module("Couverture du contrat 2028", ns="y2028")
 
 # ---------- Page 4 : Coût total (réel) — résumé simple
 def _read_energy_state(ns: str):
